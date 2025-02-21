@@ -1,51 +1,88 @@
-import pygame
+import os
+import pickle
 import random
 import numpy as np
+import pygame
 import torch
+import torch.nn as nn
+import torch.optim as optim
+
 import learning
-import os
 from learning import DQN, ReplayMemory, train_dqn, select_action
-import pickle
 
-# Initialize Pygame
-pygame.init()
+############################
+#          GLOBALS
+############################
 
-# Constants
-WIDTH, HEIGHT = 500, 500  # Screen width and height
-GRID_SIZE = 20  # Size of each grid square
-PACMAN_RADIUS = GRID_SIZE // 2 - 2  # Radius of Pac-Man
-ENEMY_RADIUS = GRID_SIZE // 2 - 2  # Radius of enemies
-FPS = 60  # Frames per second
-ENEMY_MOVE_DELAY = 250
+# Screen / Grid Dimensions
+WIDTH, HEIGHT = 500, 500
+GRID_SIZE = 20
+
+# Pac-Man / Enemy / Maze Constants
+PACMAN_RADIUS = GRID_SIZE // 2 - 2
+ENEMY_RADIUS = GRID_SIZE // 2 - 2
+FPS = 60
+ENEMY_MOVE_DELAY = 300
 
 # Colors
-BLACK = (0, 0, 0)  # Background color
-YELLOW = (255, 255, 0)  # Pac-Man color
-RED = (255, 0, 0)  # Enemy color
-BLUE = (0, 0, 255)  # Wall color
-WHITE = (255, 255, 255)  # Dot color
+BLACK = (0, 0, 0)
+YELLOW = (255, 255, 0)
+RED = (255, 0, 0)
+BLUE = (0, 0, 255)
+WHITE = (255, 255, 255)
 
-# Create window
+# RL Hyperparameters
+INPUT_SIZE = (WIDTH // GRID_SIZE) * (HEIGHT // GRID_SIZE) + 4  # +4 for direction
+HIDDEN_SIZE = 300
+OUTPUT_SIZE = 4  # [Left, Right, Up, Down]
+MEMORY_CAPACITY = 10000
+
+# DQN Model / Optimizer Hyperparams
+LEARNING_RATE = 0.001
+BATCH_SIZE = 45
+GAMMA = 0.95
+
+# Exploration Scheduling
+EPSILON_START = 0.95
+EPSILON_DECAY = 0.999
+EPSILON_MIN = 0.2
+
+# Episodes
+NUM_EPISODES = 5000
+
+############################
+#          PYGAME INIT
+############################
+
+pygame.init()
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Simple Pac-Man")
-clock = pygame.time.Clock()  # Create a clock object for controlling the framerate
-
-# Font for score display
+clock = pygame.time.Clock()
 font = pygame.font.Font(None, 36)
 
+# Visualization Window Setup
+viz_width = WIDTH // 2
+viz_height = HEIGHT // 2
+viz_screen = pygame.display.set_mode((WIDTH + viz_width, HEIGHT))  # Extended window
 
-# Pac-Man position (starting point)
-pacman_x, pacman_y = GRID_SIZE * 2, GRID_SIZE * 2
-pacman_speed = GRID_SIZE  # Movement step size
-score = 0  # Player score
+############################
+#          GLOBAL VARS
+############################
+pacman_x = GRID_SIZE * 2
+pacman_y = GRID_SIZE * 2
+pacman_dx, pacman_dy = 0, 0
+score = 0
+last_enemy_move_time = pygame.time.get_ticks()
 
-# Walls (list of rectangles)
+############################
+#        WALL CREATION
+############################
 walls = [
     # Outer boundary walls
-    pygame.Rect(0, 0, WIDTH, GRID_SIZE),  # Top boundary
-    pygame.Rect(0, HEIGHT - GRID_SIZE, WIDTH, GRID_SIZE),  # Bottom boundary
-    pygame.Rect(0, 0, GRID_SIZE, HEIGHT),  # Left boundary
-    pygame.Rect(WIDTH - GRID_SIZE, 0, GRID_SIZE, HEIGHT),  # Right boundary
+    pygame.Rect(0, 0, WIDTH, GRID_SIZE),
+    pygame.Rect(0, HEIGHT - GRID_SIZE, WIDTH, GRID_SIZE),
+    pygame.Rect(0, 0, GRID_SIZE, HEIGHT),
+    pygame.Rect(WIDTH - GRID_SIZE, 0, GRID_SIZE, HEIGHT),
     
     # Inner maze walls
     pygame.Rect(GRID_SIZE * 5, GRID_SIZE * 5, GRID_SIZE * 15, GRID_SIZE),
@@ -64,296 +101,286 @@ walls = [
     pygame.Rect(GRID_SIZE * 12, GRID_SIZE * 8, GRID_SIZE, GRID_SIZE * 2)
 ]
 
-# Dots (list of positions) excluding wall positions
-dots = [(x, y) for x in range(0, WIDTH, GRID_SIZE) for y in range(0, HEIGHT, GRID_SIZE) 
-        if not any(pygame.Rect(x, y, GRID_SIZE, GRID_SIZE).colliderect(wall) for wall in walls)]
+############################
+#    DOTS / SPAWN LOGIC
+############################
+dots = [
+    (x, y) for x in range(0, WIDTH, GRID_SIZE)
+    for y in range(0, HEIGHT, GRID_SIZE)
+    if not any(pygame.Rect(x, y, GRID_SIZE, GRID_SIZE).colliderect(w) for w in walls)
+]
 
 def get_valid_spawn():
-    """Finds a random position that is not inside a wall or the player's position."""
+    """Find a random position not inside a wall or Pac-Man."""
     while True:
         x = random.randint(1, (WIDTH // GRID_SIZE) - 2) * GRID_SIZE
         y = random.randint(1, (HEIGHT // GRID_SIZE) - 2) * GRID_SIZE
         new_rect = pygame.Rect(x, y, GRID_SIZE, GRID_SIZE)
-        
-        # Ensure enemy does not spawn inside a wall or on Pac-Man
-        if not any(new_rect.colliderect(wall) for wall in walls) and (x, y) != (pacman_x, pacman_y):
+        if not any(new_rect.colliderect(w) for w in walls) and (x, y) != (pacman_x, pacman_y):
             return x, y
 
-# Pac-Man position (starting point)
-pacman_x, pacman_y = GRID_SIZE * 2, GRID_SIZE * 2
-
-
-# Initialize enemies in random positions while ensuring they are not inside walls
+############################
+#      ENEMY SPAWN
+############################
 enemies = []
 for _ in range(10):
-    x, y = get_valid_spawn()
+    ex, ey = get_valid_spawn()
     dx, dy = random.choice([-GRID_SIZE, GRID_SIZE]), random.choice([-GRID_SIZE, GRID_SIZE])
-    enemies.append([x, y, dx, dy])
+    enemies.append([ex, ey, dx, dy])
 
 def randomize_enemies():
-    """Replace all enemies with new locations."""
-    global enemies  # Ensure we modify the global enemies list
-    num_enemies = len(enemies)  # Store current enemy count
-    enemies = []  # Clear existing enemies
-    for _ in range(num_enemies):  # Maintain the same number of enemies
-        x, y = get_valid_spawn()
+    """Regenerate enemies with new spawns."""
+    global enemies
+    num_enemies = len(enemies)
+    enemies = []
+    for _ in range(num_enemies):
+        ex, ey = get_valid_spawn()
         dx, dy = random.choice([-GRID_SIZE, GRID_SIZE]), random.choice([-GRID_SIZE, GRID_SIZE])
-        enemies.append([x, y, dx, dy])
+        enemies.append([ex, ey, dx, dy])
 
-
-
-# Track time for enemy movement
-last_enemy_move_time = pygame.time.get_ticks()
-
-pacman_dx, pacman_dy = 0, 0
+############################
+#       GAME STATE
+############################
 def get_game_state():
-    """Returns a tensor representation of the game state with walls, enemies, dots, and movement direction."""
+    """Tensor representation of walls, enemies, dots, Pac-Man, direction."""
+    global pacman_x, pacman_y, pacman_dx, pacman_dy
     state = np.zeros((WIDTH // GRID_SIZE, HEIGHT // GRID_SIZE))
 
-    for wall in walls:
-        x_start = wall.x // GRID_SIZE
-        y_start = wall.y // GRID_SIZE
-        x_end = (wall.x + wall.width) // GRID_SIZE
-        y_end = (wall.y + wall.height) // GRID_SIZE
+    # Mark walls
+    for w in walls:
+        x_start = w.x // GRID_SIZE
+        y_start = w.y // GRID_SIZE
+        x_end = (w.x + w.width) // GRID_SIZE
+        y_end = (w.y + w.height) // GRID_SIZE
+        for xx in range(x_start, x_end):
+            for yy in range(y_start, y_end):
+                state[xx, yy] = -1
 
-        for x in range(x_start, x_end):
-            for y in range(y_start, y_end):
-                state[x, y] = -1
-
+    # Mark dots
     for dot in dots:
-        dx, dy = dot[0] // GRID_SIZE, dot[1] // GRID_SIZE
-        if state[dx, dy] == 0:  # Only mark if it's not a wall
-            state[dx, dy] = 0.5
+        dx_, dy_ = dot[0] // GRID_SIZE, dot[1] // GRID_SIZE
+        if state[dx_, dy_] == 0:
+            state[dx_, dy_] = 0.5
 
-    for enemy in enemies:
-        ex, ey = enemy[0] // GRID_SIZE, enemy[1] // GRID_SIZE
-        if state[ex, ey] in [0, 0.5]:  # Only mark if it's an empty or dot space
+    # Mark enemies
+    for en in enemies:
+        ex, ey = en[0] // GRID_SIZE, en[1] // GRID_SIZE
+        if state[ex, ey] in [0, 0.5]:
             state[ex, ey] = -2
-    
+
+    # Mark Pac-Man
     px, py = pacman_x // GRID_SIZE, pacman_y // GRID_SIZE
     state[px, py] = 5
 
+    # Flatten
     state_tensor = torch.tensor(state.flatten(), dtype=torch.float32).unsqueeze(0)
 
-    pacman_direction = [0, 0, 0, 0]  # [Left, Right, Up, Down]
-    if pacman_dx == -1: pacman_direction[0] = 1
-    if pacman_dx == 1: pacman_direction[1] = 1
-    if pacman_dy == -1: pacman_direction[2] = 1
-    if pacman_dy == 1: pacman_direction[3] = 1
-    direction_tensor = torch.tensor([pacman_direction], dtype=torch.float32)
+    # Movement direction: [left, right, up, down]
+    direction = [0, 0, 0, 0]
+    if pacman_dx == -1: direction[0] = 1
+    if pacman_dx == 1:  direction[1] = 1
+    if pacman_dy == -1: direction[2] = 1
+    if pacman_dy == 1:  direction[3] = 1
+    direction_tensor = torch.tensor([direction], dtype=torch.float32)
 
-    # print("Pac-Man Position:", np.count_nonzero(state == 5))
-    # print("Enemy marked:", np.count_nonzero(state == -2))
-    # print("Walls Marked:", np.count_nonzero(state == -1))
-    # print("Dots Marked:", np.count_nonzero(state == 0.5))
-    # print("empty:", np.count_nonzero(state == 0))
-    return torch.cat((state_tensor, direction_tensor), dim=1)  
+    # Return combined
+    return torch.cat((state_tensor, direction_tensor), dim=1)
 
-
-
-
-# Initialize the DQN model
-input_size = (WIDTH // GRID_SIZE) * (HEIGHT // GRID_SIZE) + 4  # = 630
-output_size = 4  # Four possible actions (left, right, up, down)
-model = DQN(input_size, 300, output_size)
-
-# Initialize Replay Memory and Optimizer
-memory = ReplayMemory(10000)
-optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-
-# Training parameters
-epsilon = 0.9  # Initial exploration rate
-epsilon_decay = 0.998  # Decay exploration over time
-min_epsilon = 0.2
-gamma = 0.95  # Discount factor
-batch_size = 45
-num_episodes = 5000
-
-if os.path.exists("pacman_dqn.pth"):
-    model.load_state_dict(torch.load("pacman_dqn.pth"))
-    model.eval()  # Set to evaluation mode
-    print("Loaded existing trained model: pacman_dqn.pth")
-
-# Load Replay Memory If Exists
-memory = ReplayMemory(10000)  # Default if no file exists
-if os.path.exists("replay_memory.pkl"):
-    with open("replay_memory.pkl", "rb") as f:
-        memory = pickle.load(f)
-    print(f"Loaded existing replay memory with {len(memory)} transitions.")
-
-def get_reward(pacman_x, pacman_y, prev_x, prev_y, dots, enemies, done):
-    """
-    Compute reward for the AI based on the current state.
-    """
-    # If the game is over, apply -5000 immediately
-    if done:
-        return -1000
-
-    # If Pac-Man eats a dot, reward it
-    if (pacman_x, pacman_y) in dots:
-        return 40
-
-    # If Pac-Man tries to move into a wall, small penalty
-    if (pacman_x, pacman_y) == (prev_x, prev_y):
-        return -20
-
-    return -1
-
+############################
+#   VISUALIZATION FUNCTION
+############################
 def visualize_game_state(state):
-    """Displays the game state in a separate Pygame window."""
-    viz_width = WIDTH // 2  # Half the main game size
-    viz_height = HEIGHT // 2
-    cell_size = viz_width // (WIDTH // GRID_SIZE)  # Adjust cell size based on grid size
-
-    # Create a separate window
-    viz_screen = pygame.display.set_mode((viz_width, viz_height))
-    pygame.display.set_caption("State Visualization")
-
-    # Process the state matrix
     state_matrix = state[0, :625].numpy().reshape(WIDTH // GRID_SIZE, HEIGHT // GRID_SIZE)
 
     for x in range(WIDTH // GRID_SIZE):
         for y in range(HEIGHT // GRID_SIZE):
             val = state_matrix[x, y]
-            color = BLACK  # Default for empty space
+            color = BLACK
 
-            if val == -1:   # Wall
-                color = BLUE
-            elif val == 0.5:  # Dot
-                color = WHITE
-            elif val == -2:  # Enemy
-                color = RED
-            elif val == 5:   # Pac-Man
-                color = YELLOW
-            elif val == 0:
-                color = BLACK
+            if val == -1:   color = BLUE
+            elif val == 0.5: color = WHITE
+            elif val == -2:  color = RED
+            elif val == 5:   color = YELLOW
 
-            pygame.draw.rect(viz_screen, color, (x * cell_size, y * cell_size, cell_size, cell_size))
+            pygame.draw.rect(viz_screen, color, (WIDTH + x * (viz_width // (WIDTH // GRID_SIZE)), y * (viz_height // (HEIGHT // GRID_SIZE)), viz_width // (WIDTH // GRID_SIZE), viz_height // (HEIGHT // GRID_SIZE)))
 
     pygame.display.update()
 
+############################
+#     REWARD FUNCTION
+############################
+def get_reward(px, py, old_x, old_y, dots, enemies, done):
+    # If game is over
+    if done:
+        return -1000
+    # Dot eaten
+    if (px, py) in dots:
+        return 40
+    # Hitting wall
+    if (px, py) == (old_x, old_y):
+        return -20
+    # Step penalty
+    return -1
 
+############################
+#   SETUP MODEL / MEMORY
+############################
+model = DQN(INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE)
+memory = ReplayMemory(MEMORY_CAPACITY)
+optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
+epsilon = EPSILON_START
+episode_count = 0  # Keep track of episodes so we can save it
+if os.path.exists("pacman_dqn.pth"):
+    model.load_state_dict(torch.load("pacman_dqn.pth"))
+    model.eval()
+    print("Loaded existing trained model: pacman_dqn.pth")
 
-# Main training loop
-for episode in range(num_episodes):
-    pacman_x, pacman_y = GRID_SIZE * 2, GRID_SIZE * 2  # Reset Pac-Man
+# Load Replay Memory
+if os.path.exists("replay_memory.pkl"):
+    with open("replay_memory.pkl", "rb") as f:
+        memory = pickle.load(f)
+    print(f"Loaded existing replay memory with {len(memory)} transitions.")
+
+# Load Epsilon & Episode Count if available
+if os.path.exists("training_state.pkl"):
+    with open("training_state.pkl", "rb") as f:
+        saved_state = pickle.load(f)
+        epsilon = saved_state.get("epsilon", EPSILON_START)
+        episode_count = saved_state.get("episode_count", 0)
+    print(f"Loaded epsilon={epsilon:.3f}, episode_count={episode_count} from training_state.pkl")
+
+############################
+#       MAIN LOOP
+############################
+num_episodes_remaining = NUM_EPISODES - episode_count
+for episode in range(episode_count + 1, NUM_EPISODES + 1):
+    # Reset Pac-Man
+    pacman_x, pacman_y = GRID_SIZE * 2, GRID_SIZE * 2
     done = False
     total_reward = 0
     score = 0
 
-    last_action_time = pygame.time.get_ticks()  # Track last action time
-    episode_start_time = pygame.time.get_ticks()  # Track when the episode starts
+    last_action_time = pygame.time.get_ticks()
+    episode_start_time = pygame.time.get_ticks()
+
+    # Randomize enemies/dots
     randomize_enemies()
-    dots = [(x, y) for x in range(0, WIDTH, GRID_SIZE) for y in range(0, HEIGHT, GRID_SIZE)
-            if not any(pygame.Rect(x, y, GRID_SIZE, GRID_SIZE).colliderect(wall) for wall in walls)]
-    
+    dots = [
+        (x, y) for x in range(0, WIDTH, GRID_SIZE)
+        for y in range(0, HEIGHT, GRID_SIZE)
+        if not any(pygame.Rect(x, y, GRID_SIZE, GRID_SIZE).colliderect(w) for w in walls)
+    ]
+
+    # Initial state
     state = get_game_state()
     move_count = 0
 
     while not done:
         clock.tick(FPS)
         current_time = pygame.time.get_ticks()
-
+        agent_moved = False
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 exit()
 
-        if current_time - episode_start_time > 100000:
-            print(f"Episode {episode+1} timed out!")
+        # Episode Timeout
+        if current_time - episode_start_time > 100000:  # ~100s
+            print(f"Episode {episode} timed out!")
             break
 
-
+        # Agent Move
         if current_time - last_action_time > 100:
             move_count += 1
-            last_action_time = current_time  # Update action time
+            last_action_time = current_time
 
             action = select_action(model, state, epsilon)
 
-            prev_x, prev_y = pacman_x, pacman_y
-            if action == 0: 
-                pacman_x -= GRID_SIZE  # Move Left
-                pacman_dx, pacman_dy = -1, 0  # Update direction
-            if action == 1: 
-                pacman_x += GRID_SIZE  # Move Right
+            old_x, old_y = pacman_x, pacman_y
+            if action == 0:
+                pacman_x -= GRID_SIZE
+                pacman_dx, pacman_dy = -1, 0
+            if action == 1:
+                pacman_x += GRID_SIZE
                 pacman_dx, pacman_dy = 1, 0
-            if action == 2: 
-                pacman_y -= GRID_SIZE  # Move Up
+            if action == 2:
+                pacman_y -= GRID_SIZE
                 pacman_dx, pacman_dy = 0, -1
-            if action == 3: 
-                pacman_y += GRID_SIZE  # Move Down
+            if action == 3:
+                pacman_y += GRID_SIZE
                 pacman_dx, pacman_dy = 0, 1
 
-            # Check for wall collisions
+            # Wall collision check
             new_rect = pygame.Rect(pacman_x, pacman_y, GRID_SIZE, GRID_SIZE)
-            if any(new_rect.colliderect(wall) for wall in walls):
-                pacman_x, pacman_y = prev_x, prev_y  # Undo move
+            if any(new_rect.colliderect(w) for w in walls):
+                pacman_x, pacman_y = old_x, old_y  # Revert move
 
-            # Check game over **before** computing reward
+            # Check game over
             done = (pacman_x, pacman_y) in [(e[0], e[1]) for e in enemies]
 
-            # Compute reward AFTER checking `done`
-            reward = get_reward(pacman_x, pacman_y, prev_x, prev_y, dots, enemies, done)
+            # Reward
+            reward = get_reward(pacman_x, pacman_y, old_x, old_y, dots, enemies, done)
             next_state = get_game_state()
             memory.push(state, action, reward, next_state, done)
             state = next_state
             total_reward += reward
 
-            if (move_count % 5 == 0):
-                train_dqn(model, memory, optimizer, batch_size, gamma)
+            # Train every 5 steps
+            if move_count % 5 == 0:
+                train_dqn(model, memory, optimizer, BATCH_SIZE, GAMMA)
 
-            # Handle bean collection
+            # Dot collection
             if (pacman_x, pacman_y) in dots:
                 dots.remove((pacman_x, pacman_y))
                 score += 1
+            agent_moved = True
 
-        # Move enemies every 0.5 sec
-        if current_time - last_enemy_move_time > ENEMY_MOVE_DELAY:
+        # Enemies Move
+        if (current_time - last_enemy_move_time > ENEMY_MOVE_DELAY) and (agent_moved) :
             last_enemy_move_time = current_time
             for enemy in enemies:
                 moved = False
-                for _ in range(4):  # Try 4 directions
+                for _ in range(4):
                     dx, dy = random.choice([-GRID_SIZE, 0, GRID_SIZE]), random.choice([-GRID_SIZE, 0, GRID_SIZE])
-                    if dx == 0 and dy == 0: continue
-                    
+                    if dx == 0 and dy == 0: 
+                        continue
+
                     new_x = enemy[0] + dx
                     new_y = enemy[1] + dy
                     new_rect = pygame.Rect(new_x, new_y, GRID_SIZE, GRID_SIZE)
                     
-                    if not any(new_rect.colliderect(wall) for wall in walls):
+                    if not any(new_rect.colliderect(w) for w in walls):
                         enemy[0], enemy[1] = new_x, new_y
                         enemy[2], enemy[3] = dx, dy
                         moved = True
                         break
-                
                 if not moved:
                     enemy[2], enemy[3] = -enemy[2], -enemy[3]
 
-        # Render the game
+        # Render Main Game
         screen.fill(BLACK)
-        for wall in walls:
-            pygame.draw.rect(screen, BLUE, wall)
+        for w in walls:
+            pygame.draw.rect(screen, BLUE, w)
         for x, y in dots:
-            pygame.draw.circle(screen, WHITE, (x + GRID_SIZE // 2, y + GRID_SIZE // 2), 3)
+            pygame.draw.circle(screen, WHITE, (x + PACMAN_RADIUS, y + PACMAN_RADIUS), 3)
         pygame.draw.circle(screen, YELLOW, (pacman_x + PACMAN_RADIUS, pacman_y + PACMAN_RADIUS), PACMAN_RADIUS)
-        for enemy in enemies:
-            pygame.draw.circle(screen, RED, (enemy[0] + ENEMY_RADIUS, enemy[1] + ENEMY_RADIUS), ENEMY_RADIUS)
+        for en in enemies:
+            pygame.draw.circle(screen, RED, (en[0] + ENEMY_RADIUS, en[1] + ENEMY_RADIUS), ENEMY_RADIUS)
 
         # Render Score
-        score_text = font.render(f"total_reward: {total_reward}", True, WHITE)
+        score_text = font.render(f"Episode: {episode}, Reward: {total_reward}, Eps: {epsilon:.3f}", True, WHITE)
         screen.blit(score_text, (10, 10))
-
-        # visualize_game_state(state)
+        visualize_game_state(state)
         pygame.display.flip()
-        
 
-    epsilon = max(min_epsilon, epsilon * epsilon_decay)
-    # for _ in range(10):  # Train 5 times at episode end
-    #     train_dqn(model, memory, optimizer, batch_size, gamma)
+    # Decay Epsilon
+    epsilon = max(EPSILON_MIN, epsilon * EPSILON_DECAY)
 
+    # Print Episode Info
+    print(f"Episode {episode}, Score: {score}, Reward: {total_reward}, Epsilon: {epsilon:.3f}, Replay: {len(memory)}")
 
-    print(f"Episode {episode+1}, Score: {score}, Reward: {total_reward}, Epsilon: {epsilon:.3f}, Replay: {memory.memory.__len__()}")
+    # Save DQN Model
     torch.save(model.state_dict(), "pacman_dqn.pth")
     print("Model saved as pacman_dqn.pth")
 
@@ -362,5 +389,13 @@ for episode in range(num_episodes):
         pickle.dump(memory, f)
     print("Replay memory saved.")
 
-pygame.quit()
+    # Save Epsilon & Episode Count
+    training_state = {
+        "epsilon": epsilon,
+        "episode_count": episode
+    }
+    with open("training_state.pkl", "wb") as f:
+        pickle.dump(training_state, f)
+    print("Training state saved.")
 
+pygame.quit()

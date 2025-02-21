@@ -8,6 +8,10 @@ from collections import deque
 import torch
 import torch.nn as nn
 
+train_step = 0  # Global counter for tracking updates
+losses = []  # Store loss history
+q_value_logs = []  # Store Q-value history
+
 class DQN(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
         super(DQN, self).__init__()
@@ -50,13 +54,15 @@ class ReplayMemory:
         return len(self.memory)
     
 def train_dqn(model, memory, optimizer, batch_size=32, gamma=0.99):
+    global train_step, losses, q_value_logs
+
     if len(memory) < batch_size:
         return  # Wait until enough samples are in memory
 
     batch = memory.sample(batch_size)
     states, actions, rewards, next_states, dones = zip(*batch)
 
-    states = torch.cat(states, dim=0)  # Correctly reshape state tensors
+    states = torch.cat(states, dim=0)
     next_states = torch.cat(next_states, dim=0)
 
     actions = torch.tensor(actions, dtype=torch.long)
@@ -72,13 +78,32 @@ def train_dqn(model, memory, optimizer, batch_size=32, gamma=0.99):
         next_q_values = model(next_states).max(1)[0]
         target_q_values = rewards + gamma * next_q_values * ~dones
 
-    # Compute loss and update model
+    # Compute loss
     loss = nn.MSELoss()(q_values, target_q_values)
-    print("q_value: ", q_values[0], "target:", target_q_values[0])
-    print("Loss: ", loss)
+
+    # Store loss and Q-values for debugging
+    losses.append(loss.item())
+    q_value_logs.append(q_values.mean().item())
+
+    # Gradient update
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
+
+    train_step += 1  # Increment step count
+
+    ### 🔹 Print Progress Every 100 Training Steps
+    if train_step % 50 == 0:
+        avg_loss = np.mean(losses[-100:])  # Average loss over the last 100 steps
+        avg_q_value = np.mean(q_value_logs[-100:])  # Average Q-value
+        max_q_value = np.max(q_value_logs[-100:])
+        min_q_value = np.min(q_value_logs[-100:])
+
+        print(f"\n🔹 TRAINING UPDATE {train_step}")
+        print(f"   ✅ Average Loss (Last 100 Steps): {avg_loss:.5f}")
+        print(f"   ✅ Average Q-value: {avg_q_value:.3f} (Min: {min_q_value:.3f}, Max: {max_q_value:.3f})")
+        print(f"   ✅ Sample Q-value: {q_values[0].item():.3f} | Target: {target_q_values[0].item():.3f}")
+        print("-" * 50)
 
 
 
