@@ -33,18 +33,18 @@ WHITE = (255, 255, 255)
 
 # RL Hyperparameters
 INPUT_SIZE = (WIDTH // GRID_SIZE) * (HEIGHT // GRID_SIZE) + 4  # +4 for direction
-HIDDEN_SIZE = 300
+HIDDEN_SIZE = 512
 OUTPUT_SIZE = 4  # [Left, Right, Up, Down]
 MEMORY_CAPACITY = 10000
 
 # DQN Model / Optimizer Hyperparams
-LEARNING_RATE = 0.001
-BATCH_SIZE = 45
+LEARNING_RATE = 0.0001
+BATCH_SIZE = 100
 GAMMA = 0.95
 
 # Exploration Scheduling
-EPSILON_START = 0.95
-EPSILON_DECAY = 0.999
+EPSILON_START = 1.0
+EPSILON_DECAY = 0.995
 EPSILON_MIN = 0.2
 
 # Episodes
@@ -212,7 +212,7 @@ def visualize_game_state(state):
 def get_reward(px, py, old_x, old_y, dots, enemies, done):
     # If game is over
     if done:
-        return -1000
+        return -500
     # Dot eaten
     if (px, py) in dots:
         return 40
@@ -227,7 +227,7 @@ def get_reward(px, py, old_x, old_y, dots, enemies, done):
 ############################
 model = DQN(INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE)
 memory = ReplayMemory(MEMORY_CAPACITY)
-optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
 
 epsilon = EPSILON_START
 episode_count = 0  # Keep track of episodes so we can save it
@@ -327,7 +327,7 @@ for episode in range(episode_count + 1, NUM_EPISODES + 1):
             total_reward += reward
 
             # Train every 5 steps
-            if move_count % 5 == 0:
+            if move_count % 10 == 0:
                 train_dqn(model, memory, optimizer, BATCH_SIZE, GAMMA)
 
             # Dot collection
@@ -336,27 +336,28 @@ for episode in range(episode_count + 1, NUM_EPISODES + 1):
                 score += 1
             agent_moved = True
 
-        # Enemies Move
-        if (current_time - last_enemy_move_time > ENEMY_MOVE_DELAY) and (agent_moved) :
+        if (current_time - last_enemy_move_time > ENEMY_MOVE_DELAY) and (agent_moved):
             last_enemy_move_time = current_time
             for enemy in enemies:
                 moved = False
-                for _ in range(4):
-                    dx, dy = random.choice([-GRID_SIZE, 0, GRID_SIZE]), random.choice([-GRID_SIZE, 0, GRID_SIZE])
-                    if dx == 0 and dy == 0: 
-                        continue
+                for _ in range(4):  # Try up to 4 times to find a valid move
+                    if random.random() < 0.5:
+                        dx, dy = random.choice([-GRID_SIZE, GRID_SIZE]), 0  # Horizontal move
+                    else:
+                        dx, dy = 0, random.choice([-GRID_SIZE, GRID_SIZE])  # Vertical move
 
                     new_x = enemy[0] + dx
                     new_y = enemy[1] + dy
                     new_rect = pygame.Rect(new_x, new_y, GRID_SIZE, GRID_SIZE)
-                    
+
                     if not any(new_rect.colliderect(w) for w in walls):
                         enemy[0], enemy[1] = new_x, new_y
                         enemy[2], enemy[3] = dx, dy
                         moved = True
-                        break
-                if not moved:
-                    enemy[2], enemy[3] = -enemy[2], -enemy[3]
+                        break  # Exit loop once a valid move is found
+
+                    if not moved:
+                        enemy[2], enemy[3] = -enemy[2], -enemy[3]  # Reverse direction if stuck
 
         # Render Main Game
         screen.fill(BLACK)

@@ -13,29 +13,54 @@ losses = []  # Store loss history
 q_value_logs = []  # Store Q-value history
 
 class DQN(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
+    def __init__(self, input_size, hidden_size, output_size, dropout_rate=0.1):
         super(DQN, self).__init__()
         self.fc1 = nn.Linear(input_size, hidden_size)
+        self.bn1 = nn.BatchNorm1d(hidden_size)  # BatchNorm after first layer
         self.relu1 = nn.ReLU()
+        self.dropout1 = nn.Dropout(p=dropout_rate)  
+
         self.fc2 = nn.Linear(hidden_size, hidden_size)
+        self.bn2 = nn.BatchNorm1d(hidden_size)  # BatchNorm after second layer
         self.relu2 = nn.ReLU()
+        self.dropout2 = nn.Dropout(p=dropout_rate)
+
         self.fc3 = nn.Linear(hidden_size, hidden_size)
+        self.bn3 = nn.BatchNorm1d(hidden_size)  # BatchNorm after third layer
         self.relu3 = nn.ReLU()
-        self.fc4 = nn.Linear(hidden_size, hidden_size)  # New hidden layer
+        self.dropout3 = nn.Dropout(p=dropout_rate)
+
+        self.fc4 = nn.Linear(hidden_size, hidden_size)  
+        self.bn4 = nn.BatchNorm1d(hidden_size)  # BatchNorm after fourth layer
         self.relu4 = nn.ReLU()
+        self.dropout4 = nn.Dropout(p=dropout_rate)
+
         self.fc5 = nn.Linear(hidden_size, output_size)  # Output layer
 
     def forward(self, x):
-        x = x.view(x.shape[0], -1)
+        x = x.view(x.shape[0], -1)  
+
         x = self.fc1(x)
+        x = self.bn1(x)  # Normalize batch
         x = self.relu1(x)
+        x = self.dropout1(x)
+
         x = self.fc2(x)
+        x = self.bn2(x)
         x = self.relu2(x)
+        x = self.dropout2(x)
+
         x = self.fc3(x)
+        x = self.bn3(x)
         x = self.relu3(x)
-        x = self.fc4(x)  # Pass through the new hidden layer
+        x = self.dropout3(x)
+
+        x = self.fc4(x)
+        x = self.bn4(x)
         x = self.relu4(x)
-        x = self.fc5(x)  # Output layer
+        x = self.dropout4(x)
+
+        x = self.fc5(x)  # Output layer (no BatchNorm or Dropout)
         return x
 
 
@@ -92,15 +117,15 @@ def train_dqn(model, memory, optimizer, batch_size=32, gamma=0.99):
 
     train_step += 1  # Increment step count
 
-    ### 🔹 Print Progress Every 100 Training Steps
+    ### 🔹 Print Progress Every 50 Training Steps
     if train_step % 50 == 0:
-        avg_loss = np.mean(losses[-100:])  # Average loss over the last 100 steps
-        avg_q_value = np.mean(q_value_logs[-100:])  # Average Q-value
-        max_q_value = np.max(q_value_logs[-100:])
-        min_q_value = np.min(q_value_logs[-100:])
+        avg_loss = np.mean(losses[-50:])  # Average loss over the last 100 steps
+        avg_q_value = np.mean(q_value_logs[-50:])  # Average Q-value
+        max_q_value = np.max(q_value_logs[-50:])
+        min_q_value = np.min(q_value_logs[-50:])
 
         print(f"\n🔹 TRAINING UPDATE {train_step}")
-        print(f"   ✅ Average Loss (Last 100 Steps): {avg_loss:.5f}")
+        print(f"   ✅ Average Loss (Last 50 Steps): {avg_loss:.5f}")
         print(f"   ✅ Average Q-value: {avg_q_value:.3f} (Min: {min_q_value:.3f}, Max: {max_q_value:.3f})")
         print(f"   ✅ Sample Q-value: {q_values[0].item():.3f} | Target: {target_q_values[0].item():.3f}")
         print("-" * 50)
@@ -108,11 +133,13 @@ def train_dqn(model, memory, optimizer, batch_size=32, gamma=0.99):
 
 
 def select_action(model, state, epsilon):
-    if random.random() < epsilon:  # Explore
+    if random.random() < epsilon:  # Exploration
         return random.randint(0, 3)  # 4 possible actions
-    else:  # Exploit
+    else:  # Exploitation
         with torch.no_grad():
-            q_values = model(state)  # Ensure shape (1, output_size)
+            model.eval()  # Use eval mode to avoid BatchNorm issues
+            q_values = model(state.unsqueeze(0))  # Add batch dimension
+            model.train()  # Restore training mode
             return q_values.argmax(dim=1).item()  # Select best action
 
 
