@@ -38,17 +38,17 @@ OUTPUT_SIZE = 4  # [Left, Right, Up, Down]
 MEMORY_CAPACITY = 10000
 
 # DQN Model / Optimizer Hyperparams
-LEARNING_RATE = 0.0001
-BATCH_SIZE = 100
-GAMMA = 0.95
+LEARNING_RATE = 0.0002
+BATCH_SIZE = 80
+GAMMA = 0.9
 
 # Exploration Scheduling
 EPSILON_START = 1.0
-EPSILON_DECAY = 0.995
+EPSILON_DECAY = 0.998
 EPSILON_MIN = 0.2
 
 # Episodes
-NUM_EPISODES = 5000
+NUM_EPISODES = 2000
 
 ############################
 #          PYGAME INIT
@@ -123,7 +123,7 @@ def get_valid_spawn():
 #      ENEMY SPAWN
 ############################
 enemies = []
-for _ in range(10):
+for _ in range(8):
     ex, ey = get_valid_spawn()
     dx, dy = random.choice([-GRID_SIZE, GRID_SIZE]), random.choice([-GRID_SIZE, GRID_SIZE])
     enemies.append([ex, ey, dx, dy])
@@ -215,7 +215,7 @@ def get_reward(px, py, old_x, old_y, dots, enemies, done):
         return -500
     # Dot eaten
     if (px, py) in dots:
-        return 40
+        return 25
     # Hitting wall
     if (px, py) == (old_x, old_y):
         return -20
@@ -292,6 +292,7 @@ for episode in range(episode_count + 1, NUM_EPISODES + 1):
 
         # Agent Move
         if current_time - last_action_time > 100:
+            state = get_game_state()
             move_count += 1
             last_action_time = current_time
 
@@ -327,7 +328,7 @@ for episode in range(episode_count + 1, NUM_EPISODES + 1):
             total_reward += reward
 
             # Train every 5 steps
-            if move_count % 10 == 0:
+            if move_count % 5 == 0:
                 train_dqn(model, memory, optimizer, BATCH_SIZE, GAMMA)
 
             # Dot collection
@@ -374,6 +375,7 @@ for episode in range(episode_count + 1, NUM_EPISODES + 1):
         screen.blit(score_text, (10, 10))
         visualize_game_state(state)
         pygame.display.flip()
+        state = get_game_state()
 
     # Decay Epsilon
     epsilon = max(EPSILON_MIN, epsilon * EPSILON_DECAY)
