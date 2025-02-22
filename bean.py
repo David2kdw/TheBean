@@ -215,10 +215,10 @@ def get_reward(px, py, old_x, old_y, dots, enemies, done):
         return -500
     # Dot eaten
     if (px, py) in dots:
-        return 25
+        return 10
     # Hitting wall
     if (px, py) == (old_x, old_y):
-        return -20
+        return -10
     # Step penalty
     return -1
 

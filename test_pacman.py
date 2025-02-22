@@ -215,10 +215,10 @@ def get_reward(px, py, old_x, old_y, dots, enemies, done):
         return -500
     # Dot eaten
     if (px, py) in dots:
-        return 25
+        return 10
     # Hitting wall
     if (px, py) == (old_x, old_y):
-        return -20
+        return -10
     # Step penalty
     return -1
 
@@ -282,7 +282,7 @@ for episode in range(5):
             move_count += 1
             last_action_time = current_time
 
-            action = select_action(model, state, 0.1)
+            action = select_action(model, state, EPSILON_START)
 
             old_x, old_y = pacman_x, pacman_y
             if action == 0:
@@ -309,7 +309,6 @@ for episode in range(5):
             # Reward
             reward = get_reward(pacman_x, pacman_y, old_x, old_y, dots, enemies, done)
             next_state = get_game_state()
-            memory.push(state, action, reward, next_state, done)
             state = next_state
             total_reward += reward
 
@@ -359,10 +358,8 @@ for episode in range(5):
         pygame.display.flip()
         state = get_game_state()
 
-    # Decay Epsilon
-    epsilon = max(EPSILON_MIN, epsilon * EPSILON_DECAY)
 
     # Print Episode Info
-    print(f"Episode {episode}, Score: {score}, Reward: {total_reward}, Epsilon: {epsilon:.3f}, Replay: {len(memory)}")
+    print(f"Episode {episode}, Score: {score}, Reward: {total_reward}, Epsilon: {EPSILON_START:.3f}, Replay: {len(memory)}")
 
 pygame.quit()
