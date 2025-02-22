@@ -78,11 +78,11 @@ class ReplayMemory:
     def __len__(self):
         return len(self.memory)
     
-def train_dqn(model, memory, optimizer, batch_size=32, gamma=0.99):
+def train_dqn(online_model, target_model, memory, optimizer, batch_size=32, gamma=0.99):
     global train_step, losses, q_value_logs
 
     if len(memory) < batch_size:
-        return  # Wait until enough samples are in memory
+        return
 
     batch = memory.sample(batch_size)
     states, actions, rewards, next_states, dones = zip(*batch)
@@ -94,30 +94,34 @@ def train_dqn(model, memory, optimizer, batch_size=32, gamma=0.99):
     rewards = torch.tensor(rewards, dtype=torch.float32)
     dones = torch.tensor(dones, dtype=torch.bool)
 
-    # Compute current Q-values
-    q_values = model(states)  # Forward pass
+    # 1. Q-values of current states (from online network)
+    q_values = online_model(states)
     q_values = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
 
-    # Compute target Q-values
     with torch.no_grad():
-        next_q_values = model(next_states).max(1)[0]
+        # 2. Next actions from online model
+        next_online_q = online_model(next_states)
+        next_actions = next_online_q.argmax(dim=1, keepdim=True)
+
+        # 3. Q-values of next states from target model
+        next_target_q = target_model(next_states)
+        next_q_values = next_target_q.gather(1, next_actions).squeeze(1)
+
+        # 4. Double DQN target
         target_q_values = rewards + gamma * next_q_values * ~dones
 
-    # Compute loss
-    loss = nn.MSELoss()(q_values, target_q_values)
+    # 5. Compute loss
+    loss = nn.SmoothL1Loss()(q_values, target_q_values)
 
-    # Store loss and Q-values for debugging
     losses.append(loss.item())
     q_value_logs.append(q_values.mean().item())
 
-    # Gradient update
+    # 6. Backprop
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
 
-    train_step += 1  # Increment step count
-
-    ### 🔹 Print Progress Every 50 Training Steps
+    train_step += 1
     if train_step % 50 == 0:
         avg_loss = np.mean(losses[-50:])  # Average loss over the last 100 steps
         avg_q_value = np.mean(q_value_logs[-50:])  # Average Q-value

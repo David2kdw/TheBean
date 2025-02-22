@@ -38,12 +38,12 @@ OUTPUT_SIZE = 4  # [Left, Right, Up, Down]
 MEMORY_CAPACITY = 10000
 
 # DQN Model / Optimizer Hyperparams
-LEARNING_RATE = 0.0001
+LEARNING_RATE = 0.0002
 BATCH_SIZE = 80
 GAMMA = 0.9
 
 # Exploration Scheduling
-EPSILON_START = 1.0
+EPSILON_START = 0.05
 EPSILON_DECAY = 0.997
 EPSILON_MIN = 0.2
 
@@ -234,35 +234,13 @@ def update_target_model(online_model, target_model):
     target_model.load_state_dict(online_model.state_dict())  # Copy weights
     print("🎯 Target model updated!")
 
-
-epsilon = EPSILON_START
-episode_count = 0  # Keep track of episodes so we can save it
-if os.path.exists("pacman_dqn.pth"):
-    model.load_state_dict(torch.load("pacman_dqn.pth"))
-    model.eval()
-    print("Loaded existing trained model: pacman_dqn.pth")
-
-# Load Replay Memory
-if os.path.exists("replay_memory.pkl"):
-    with open("replay_memory.pkl", "rb") as f:
-        memory = pickle.load(f)
-    print(f"Loaded existing replay memory with {len(memory)} transitions.")
-
-# Load Epsilon & Episode Count if available
-if os.path.exists("training_state.pkl"):
-    with open("training_state.pkl", "rb") as f:
-        saved_state = pickle.load(f)
-        epsilon = saved_state.get("epsilon", EPSILON_START)
-        episode_count = saved_state.get("episode_count", 0)
-    print(f"Loaded epsilon={epsilon:.3f}, episode_count={episode_count} from training_state.pkl")
 update_target_model(model, target_model)
 
 ############################
 #       MAIN LOOP
 ############################
-num_episodes_remaining = NUM_EPISODES - episode_count
-total_move_count = 0
-for episode in range(episode_count + 1, NUM_EPISODES + 1):
+
+for episode in range(5):
     # Reset Pac-Man
     pacman_x, pacman_y = GRID_SIZE * 2, GRID_SIZE * 2
     done = False
@@ -302,10 +280,9 @@ for episode in range(episode_count + 1, NUM_EPISODES + 1):
         if current_time - last_action_time > 100:
             state = get_game_state()
             move_count += 1
-            total_move_count += 1
             last_action_time = current_time
 
-            action = select_action(model, state, epsilon)
+            action = select_action(model, state, 0.1)
 
             old_x, old_y = pacman_x, pacman_y
             if action == 0:
@@ -335,12 +312,6 @@ for episode in range(episode_count + 1, NUM_EPISODES + 1):
             memory.push(state, action, reward, next_state, done)
             state = next_state
             total_reward += reward
-
-            # Train every 5 steps
-            if move_count % 5 == 0:
-                train_dqn(model, target_model, memory, optimizer, BATCH_SIZE, GAMMA)
-            if total_move_count % 1000 == 0:
-                update_target_model(model, target_model)
 
             # Dot collection
             if (pacman_x, pacman_y) in dots:
@@ -382,7 +353,7 @@ for episode in range(episode_count + 1, NUM_EPISODES + 1):
             pygame.draw.circle(screen, RED, (en[0] + ENEMY_RADIUS, en[1] + ENEMY_RADIUS), ENEMY_RADIUS)
 
         # Render Score
-        score_text = font.render(f"Episode: {episode}, Reward: {total_reward}, Eps: {epsilon:.3f}", True, WHITE)
+        score_text = font.render(f"Episode: {episode}, Reward: {total_reward}, Eps: {EPSILON_START:.3f}", True, WHITE)
         screen.blit(score_text, (10, 10))
         visualize_game_state(state)
         pygame.display.flip()
@@ -393,23 +364,5 @@ for episode in range(episode_count + 1, NUM_EPISODES + 1):
 
     # Print Episode Info
     print(f"Episode {episode}, Score: {score}, Reward: {total_reward}, Epsilon: {epsilon:.3f}, Replay: {len(memory)}")
-
-    # Save DQN Model
-    torch.save(model.state_dict(), "pacman_dqn.pth")
-    print("Model saved as pacman_dqn.pth")
-
-    # Save Replay Memory
-    with open("replay_memory.pkl", "wb") as f:
-        pickle.dump(memory, f)
-    print("Replay memory saved.")
-
-    # Save Epsilon & Episode Count
-    training_state = {
-        "epsilon": epsilon,
-        "episode_count": episode
-    }
-    with open("training_state.pkl", "wb") as f:
-        pickle.dump(training_state, f)
-    print("Training state saved.")
 
 pygame.quit()
