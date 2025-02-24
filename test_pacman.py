@@ -33,7 +33,7 @@ WHITE = (255, 255, 255)
 
 # RL Hyperparameters
 INPUT_SIZE = (WIDTH // GRID_SIZE) * (HEIGHT // GRID_SIZE) + 4  # +4 for direction
-HIDDEN_SIZE = 512
+HIDDEN_SIZE = 256
 OUTPUT_SIZE = 4  # [Left, Right, Up, Down]
 MEMORY_CAPACITY = 10000
 
@@ -123,7 +123,7 @@ def get_valid_spawn():
 #      ENEMY SPAWN
 ############################
 enemies = []
-for _ in range(8):
+for _ in range(15):
     ex, ey = get_valid_spawn()
     dx, dy = random.choice([-GRID_SIZE, GRID_SIZE]), random.choice([-GRID_SIZE, GRID_SIZE])
     enemies.append([ex, ey, dx, dy])
@@ -191,18 +191,55 @@ def get_game_state():
 ############################
 def visualize_game_state(state):
     state_matrix = state[0, :625].numpy().reshape(WIDTH // GRID_SIZE, HEIGHT // GRID_SIZE)
+    direction_vector = state[0, 625:].numpy()  # Last 4 values contain movement direction
 
+    cell_width = viz_width // (WIDTH // GRID_SIZE)
+    cell_height = viz_height // (HEIGHT // GRID_SIZE)
+
+    # Draw the game state
     for x in range(WIDTH // GRID_SIZE):
         for y in range(HEIGHT // GRID_SIZE):
             val = state_matrix[x, y]
             color = BLACK
 
-            if val == -1:   color = BLUE
-            elif val == 0.5: color = WHITE
-            elif val == -2:  color = RED
-            elif val == 5:   color = YELLOW
+            if val == -1:   color = BLUE   # Wall
+            elif val == 0.5: color = WHITE  # Dot
+            elif val == -2:  color = RED    # Enemy
+            elif val == 5:   color = YELLOW  # Pac-Man
 
-            pygame.draw.rect(viz_screen, color, (WIDTH + x * (viz_width // (WIDTH // GRID_SIZE)), y * (viz_height // (HEIGHT // GRID_SIZE)), viz_width // (WIDTH // GRID_SIZE), viz_height // (HEIGHT // GRID_SIZE)))
+            pygame.draw.rect(viz_screen, color, (
+                WIDTH + x * cell_width, 
+                y * cell_height, 
+                cell_width, 
+                cell_height
+            ))
+
+    # Movement direction bars (draw on corresponding edges)
+    bar_thickness = 8
+
+    if direction_vector[0] == 1:  # Moving Left
+        pygame.draw.rect(viz_screen, RED, (
+            WIDTH, 0,  # Position at the left side
+            bar_thickness, viz_height
+        ))
+
+    if direction_vector[1] == 1:  # Moving Right
+        pygame.draw.rect(viz_screen, RED, (
+            WIDTH + viz_width - bar_thickness, 0,  # Position at the right side
+            bar_thickness, viz_height
+        ))
+
+    if direction_vector[2] == 1:  # Moving Up
+        pygame.draw.rect(viz_screen, RED, (
+            WIDTH, 0,  # Position at the top
+            viz_width, bar_thickness
+        ))
+
+    if direction_vector[3] == 1:  # Moving Down
+        pygame.draw.rect(viz_screen, RED, (
+            WIDTH, viz_height - bar_thickness,  # Position at the bottom
+            viz_width, bar_thickness
+        ))
 
     pygame.display.update()
 
@@ -212,7 +249,7 @@ def visualize_game_state(state):
 def get_reward(px, py, old_x, old_y, dots, enemies, done):
     # If game is over
     if done:
-        return -500
+        return -100
     # Dot eaten
     if (px, py) in dots:
         return 10
@@ -220,7 +257,7 @@ def get_reward(px, py, old_x, old_y, dots, enemies, done):
     if (px, py) == (old_x, old_y):
         return -10
     # Step penalty
-    return -1
+    return -0.5
 
 ############################
 #   SETUP MODEL / MEMORY
@@ -228,13 +265,11 @@ def get_reward(px, py, old_x, old_y, dots, enemies, done):
 model = DQN(INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE)
 memory = ReplayMemory(MEMORY_CAPACITY)
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
+if os.path.exists("pacman_dqn.pth"):
+    model.load_state_dict(torch.load("pacman_dqn.pth"))
+    model.eval()
+    print("Loaded existing trained model: pacman_dqn.pth")
 
-target_model = DQN(INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE)
-def update_target_model(online_model, target_model):
-    target_model.load_state_dict(online_model.state_dict())  # Copy weights
-    print("🎯 Target model updated!")
-
-update_target_model(model, target_model)
 
 ############################
 #       MAIN LOOP
