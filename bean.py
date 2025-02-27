@@ -39,13 +39,13 @@ MEMORY_CAPACITY = 10000
 
 # DQN Model / Optimizer Hyperparams
 LEARNING_RATE = 0.0001
-BATCH_SIZE = 100
+BATCH_SIZE = 80
 GAMMA = 0.7
 
 # Exploration Scheduling
 EPSILON_START = 1.0
-EPSILON_DECAY = 0.999
-EPSILON_MIN = 0.4
+EPSILON_DECAY = 0.9999
+EPSILON_MIN = 0.3
 
 # Episodes
 NUM_EPISODES = 7000
@@ -258,13 +258,13 @@ def visualize_game_state(state):
 def get_reward(px, py, old_x, old_y, dots, enemies, done):
     # If game is over
     if done:
-        return -100
+        return -50
     # Dot eaten
     if (px, py) in dots:
-        return 10
+        return 20
     # Hitting wall
     if (px, py) == (old_x, old_y):
-        return -10
+        return -5
     # Step penalty
     return -0.5
 
@@ -348,7 +348,7 @@ for episode in range(episode_count + 1, NUM_EPISODES + 1):
                 exit()
 
         # Episode Timeout
-        if current_time - episode_start_time > 100000:  # ~100s
+        if current_time - episode_start_time > 30000:  # ~100s
             print(f"Episode {episode} timed out!")
             break
 
@@ -391,9 +391,9 @@ for episode in range(episode_count + 1, NUM_EPISODES + 1):
             total_reward += reward
 
             # Train every 5 steps
-            if total_move_count % 5 == 0:
+            if total_move_count % 10 == 0:
                 train_dqn(model, target_model, memory, optimizer, BATCH_SIZE, GAMMA)
-            if total_move_count % 250 == 0:
+            if total_move_count % 500 == 0:
                 update_target_model(model, target_model)
             if total_move_count % 2000 == 0:
                 # Save Replay Memory
@@ -407,7 +407,7 @@ for episode in range(episode_count + 1, NUM_EPISODES + 1):
                 score += 1
             agent_moved = True
 
-        if (enemy_move % 5 == 0) and (agent_moved):
+        if (False) and (agent_moved):
             last_enemy_move_time = current_time
             for enemy in enemies:
                 moved = False

@@ -252,7 +252,7 @@ def get_reward(px, py, old_x, old_y, dots, enemies, done):
         return -100
     # Dot eaten
     if (px, py) in dots:
-        return 10
+        return 20
     # Hitting wall
     if (px, py) == (old_x, old_y):
         return -10
@@ -353,7 +353,8 @@ for episode in range(5):
                 score += 1
             agent_moved = True
 
-        if (current_time - last_enemy_move_time > ENEMY_MOVE_DELAY) and (agent_moved):
+        # if (current_time - last_enemy_move_time > ENEMY_MOVE_DELAY) and (agent_moved):
+        if (False) and (agent_moved):
             last_enemy_move_time = current_time
             for enemy in enemies:
                 moved = False
