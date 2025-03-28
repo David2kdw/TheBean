@@ -28,7 +28,6 @@ class DQN(nn.Module):
 
         self.fc3 = nn.Linear(hidden_size, hidden_size)
         self.act3 = nn.LeakyReLU(negative_slope=0.01)
-        self.drop3 = nn.Dropout(p=dropout_rate)
 
         self.fc4 = nn.Linear(hidden_size, hidden_size // 2)
         self.act4 = nn.LeakyReLU(negative_slope=0.01)
@@ -53,7 +52,6 @@ class DQN(nn.Module):
 
         x = self.fc3(x)
         x = self.act3(x)
-        x = self.drop3(x)
 
         # Layer 3
         x = self.fc4(x)
@@ -68,7 +66,7 @@ class ReplayMemory:
         self,
         capacity,
         alpha=0.7,
-        min_termination_samples=4  # Minimum # of terminal samples per batch
+        min_termination_samples=20  # Minimum # of terminal samples per batch
     ):
         """
         :param capacity: Max number of transitions to store
@@ -93,7 +91,7 @@ class ReplayMemory:
 
         # Boost priority for terminal samples
         if done:
-            base_priority *= 5.0  # <-- Tweak as needed
+            base_priority *= 15.0  # <-- Tweak as needed
 
         priority = (base_priority) ** self.alpha
 

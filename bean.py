@@ -48,7 +48,7 @@ EPSILON_DECAY = 0.9999
 EPSILON_MIN = 0.3
 
 # Episodes
-NUM_EPISODES = 7000
+NUM_EPISODES = 100000
 
 ############################
 #          PYGAME INIT
@@ -73,6 +73,8 @@ pacman_y = GRID_SIZE * 2
 pacman_dx, pacman_dy = 0, 0
 score = 0
 last_enemy_move_time = pygame.time.get_ticks()
+
+os.makedirs("models", exist_ok=True)
 
 ############################
 #        WALL CREATION
@@ -150,6 +152,12 @@ def randomize_enemies():
 ############################
 #       GAME STATE
 ############################
+WALL_VAL = -1.0
+ENEMY_VAL = -0.8
+DOT_VAL = 0.5
+PACMAN_VAL = 1.0
+EMPTY_VAL = 0.0
+
 def get_game_state():
     """Tensor representation of walls, enemies, dots, Pac-Man, direction."""
     global pacman_x, pacman_y, pacman_dx, pacman_dy
@@ -163,23 +171,23 @@ def get_game_state():
         y_end = (w.y + w.height) // GRID_SIZE
         for xx in range(x_start, x_end):
             for yy in range(y_start, y_end):
-                state[xx, yy] = -1
+                state[xx, yy] = WALL_VAL
 
     # Mark dots
     for dot in dots:
         dx_, dy_ = dot[0] // GRID_SIZE, dot[1] // GRID_SIZE
         if state[dx_, dy_] == 0:
-            state[dx_, dy_] = 0.5
+            state[dx_, dy_] = DOT_VAL
 
     # Mark enemies
     for en in enemies:
         ex, ey = en[0] // GRID_SIZE, en[1] // GRID_SIZE
         if state[ex, ey] in [0, 0.5]:
-            state[ex, ey] = -2
+            state[ex, ey] = ENEMY_VAL
 
     # Mark Pac-Man
     px, py = pacman_x // GRID_SIZE, pacman_y // GRID_SIZE
-    state[px, py] = 5
+    state[px, py] = PACMAN_VAL
 
     # Flatten
     state_tensor = torch.tensor(state.flatten(), dtype=torch.float32).unsqueeze(0)
@@ -211,10 +219,14 @@ def visualize_game_state(state):
             val = state_matrix[x, y]
             color = BLACK
 
-            if val == -1:   color = BLUE   # Wall
-            elif val == 0.5: color = WHITE  # Dot
-            elif val == -2:  color = RED    # Enemy
-            elif val == 5:   color = YELLOW  # Pac-Man
+            if abs(val - WALL_VAL) < 1e-4:
+                color = BLUE
+            elif abs(val - DOT_VAL) < 1e-4:
+                color = WHITE
+            elif abs(val - ENEMY_VAL) < 1e-4:
+                color = RED
+            elif abs(val - PACMAN_VAL) < 1e-4:
+                color = YELLOW
 
             pygame.draw.rect(viz_screen, color, (
                 WIDTH + x * cell_width, 
@@ -255,18 +267,102 @@ def visualize_game_state(state):
 ############################
 #     REWARD FUNCTION
 ############################
+def get_dist_to_nearest(items, px, py):
+    if not items:
+        return 1.0
+    dists = [np.linalg.norm([px - x, py - y]) for (x, y) in items]
+    max_dist = np.linalg.norm([WIDTH, HEIGHT])
+    return min(dists) / max_dist
+
 def get_reward(px, py, old_x, old_y, dots, enemies, done):
-    # If game is over
     if done:
-        return -50
-    # Dot eaten
+        return -2.0  # death penalty
+
+    reward = -0.01  # small step penalty
+
     if (px, py) in dots:
-        return 20
-    # Hitting wall
+        reward += 1.0  # reward for eating dot
+
     if (px, py) == (old_x, old_y):
-        return -5
-    # Step penalty
-    return -0.5
+        reward -= 0.2  # bump into wall
+
+    # Penalty if next to any enemy (4-neighbors only)
+    for ex, ey in [(e[0], e[1]) for e in enemies]:
+        if abs(px - ex) + abs(py - ey) == GRID_SIZE:
+            reward -= 1.5
+            break
+
+    # Distance-based shaping
+    old_dot_dist = get_dist_to_nearest(dots, old_x, old_y)
+    new_dot_dist = get_dist_to_nearest(dots, px, py)
+    reward += 0.3 * (old_dot_dist - new_dot_dist)  # encourage getting closer to dots
+
+    old_enemy_dist = get_dist_to_nearest([(e[0], e[1]) for e in enemies], old_x, old_y)
+    new_enemy_dist = get_dist_to_nearest([(e[0], e[1]) for e in enemies], px, py)
+    reward += 0.2 * (new_enemy_dist - old_enemy_dist)  # encourage moving away from enemies
+
+    return reward
+
+
+
+def draw_reward_heatmap():
+    from matplotlib import cm
+    from matplotlib.colors import Normalize
+
+    # Get current Pac-Man location
+    px, py = pacman_x, pacman_y
+    old_x, old_y = px, py
+
+    grid_w = WIDTH // GRID_SIZE
+    grid_h = HEIGHT // GRID_SIZE
+
+    heatmap = np.zeros((grid_w, grid_h))
+
+    for gx in range(grid_w):
+        for gy in range(grid_h):
+            test_px, test_py = gx * GRID_SIZE, gy * GRID_SIZE
+            test_rect = pygame.Rect(test_px, test_py, GRID_SIZE, GRID_SIZE)
+            if any(test_rect.colliderect(w) for w in walls):
+                heatmap[gx, gy] = -1.0
+                continue
+            r = get_reward(test_px, test_py, old_x, old_y, dots, enemies, False)
+            heatmap[gx, gy] = r
+
+    norm = Normalize(vmin=np.min(heatmap), vmax=np.max(heatmap))
+    cmap = cm.get_cmap('coolwarm')
+
+    # Clear right panel
+    pygame.draw.rect(viz_screen, BLACK, (WIDTH, 0, viz_width, HEIGHT))
+
+    cell_width = viz_width // grid_w
+    cell_height = viz_height // grid_h
+
+    for gx in range(grid_w):
+        for gy in range(grid_h):
+            reward_val = heatmap[gx, gy]
+            if reward_val == -1.0:
+                color = (0, 0, 100)  # Wall = dark blue
+            else:
+                rgba = cmap(norm(reward_val))
+                color = tuple(int(c * 255) for c in rgba[:3])
+
+            pygame.draw.rect(viz_screen, color, (
+                WIDTH + gx * cell_width,
+                gy * cell_height,
+                cell_width,
+                cell_height
+            ))
+
+    pygame.display.update()
+    print("🔍 Reward heatmap displayed. Waiting for key...")
+
+    # Pause until a key is pressed
+    waiting = True
+    while waiting:
+        for event in pygame.event.get():
+            if event.type == pygame.KEYDOWN:
+                waiting = False
+
 
 
 
@@ -346,6 +442,9 @@ for episode in range(episode_count + 1, NUM_EPISODES + 1):
             if event.type == pygame.QUIT:
                 pygame.quit()
                 exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_h:
+                    draw_reward_heatmap()
 
         # Episode Timeout
         if current_time - episode_start_time > 30000:  # ~100s
@@ -407,7 +506,7 @@ for episode in range(episode_count + 1, NUM_EPISODES + 1):
                 score += 1
             agent_moved = True
 
-        if (False) and (agent_moved):
+        if (enemy_move % 5 == 1) and (agent_moved):
             last_enemy_move_time = current_time
             for enemy in enemies:
                 moved = False
@@ -456,6 +555,11 @@ for episode in range(episode_count + 1, NUM_EPISODES + 1):
     # Save DQN Model
     torch.save(model.state_dict(), "pacman_dqn.pth")
     print("Model saved as pacman_dqn.pth")
+
+    if episode % 1000 == 0:
+        model_path = f"models/pacman_ep{episode}.pth"
+        torch.save(model.state_dict(), model_path)
+        print(f"📁 Snapshot saved: {model_path}")
 
     # Save Epsilon & Episode Count
     training_state = {

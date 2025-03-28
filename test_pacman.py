@@ -354,7 +354,7 @@ for episode in range(5):
             agent_moved = True
 
         # if (current_time - last_enemy_move_time > ENEMY_MOVE_DELAY) and (agent_moved):
-        if (False) and (agent_moved):
+        if (current_time - last_enemy_move_time > ENEMY_MOVE_DELAY) and (agent_moved):
             last_enemy_move_time = current_time
             for enemy in enemies:
                 moved = False
