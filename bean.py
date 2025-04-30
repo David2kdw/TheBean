@@ -32,7 +32,7 @@ BLUE = (0, 0, 255)
 WHITE = (255, 255, 255)
 
 # RL Hyperparameters
-INPUT_SIZE = (WIDTH // GRID_SIZE) * (HEIGHT // GRID_SIZE) + 4  # +4 for direction
+# INPUT_SIZE = (WIDTH // GRID_SIZE) * (HEIGHT // GRID_SIZE) + 4  # +4 for direction
 HIDDEN_SIZE = 256
 OUTPUT_SIZE = 4  # [Left, Right, Up, Down]
 MEMORY_CAPACITY = 10000
@@ -51,6 +51,60 @@ EPSILON_MIN = 0.3
 NUM_EPISODES = 100000
 
 ############################
+#          GLOBAL VARS
+############################
+pacman_x = GRID_SIZE * 2
+pacman_y = GRID_SIZE * 2
+pacman_dx, pacman_dy = 0, 0
+score = 0
+last_enemy_move_time = pygame.time.get_ticks()
+
+os.makedirs("models", exist_ok=True)
+
+MAZE = """
+############################
+#............##............#
+#.####.#####.##.#####.####.#
+#.####.#####.##.#####.####.#
+#.####.#####.##.#####.####.#
+#..........................#
+#.####.##.########.##.####.#
+#......##....##....##......#
+######.#####.##.#####.##.###
+######.#          #......###
+######.# ######## #.####.###
+######.  ########  .####.###
+######.# ######## #.####.###
+######.#          #.####.###
+######.# ######## #.####.###
+#............##............#
+#.####.#####.##.#####.####.#
+#.####.#####.##.#####.####.#
+#.####.#####.##.#####.####.#
+#..........................#
+############################
+""".strip("\n")
+
+def build_maze(layout: str, grid_size: int):
+    walls, dots = [], []
+    rows = layout.splitlines()
+    h, w = len(rows), len(rows[0])
+    for j, row in enumerate(rows):
+        for i, ch in enumerate(row):
+            x, y = i * grid_size, j * grid_size
+            if ch == "#":                    # wall tile
+                walls.append(pygame.Rect(x, y, grid_size, grid_size))
+            elif ch == ".":                  # corridor *with* dot
+                dots.append((x, y))
+            # (space) ⇒ empty corridor, no dot
+    return walls, dots, w * grid_size, h * grid_size
+
+
+
+walls, dots, WIDTH, HEIGHT = build_maze(MAZE, GRID_SIZE)
+INPUT_SIZE = (WIDTH // GRID_SIZE) * (HEIGHT // GRID_SIZE) + 4  # +4 for direction
+
+############################
 #          PYGAME INIT
 ############################
 
@@ -65,52 +119,7 @@ viz_width = WIDTH // 2
 viz_height = HEIGHT // 2
 viz_screen = pygame.display.set_mode((WIDTH + viz_width, HEIGHT))  # Extended window
 
-############################
-#          GLOBAL VARS
-############################
-pacman_x = GRID_SIZE * 2
-pacman_y = GRID_SIZE * 2
-pacman_dx, pacman_dy = 0, 0
-score = 0
-last_enemy_move_time = pygame.time.get_ticks()
-
-os.makedirs("models", exist_ok=True)
-
-############################
-#        WALL CREATION
-############################
-walls = [
-    # Outer boundary walls
-    pygame.Rect(0, 0, WIDTH, GRID_SIZE),
-    pygame.Rect(0, HEIGHT - GRID_SIZE, WIDTH, GRID_SIZE),
-    pygame.Rect(0, 0, GRID_SIZE, HEIGHT),
-    pygame.Rect(WIDTH - GRID_SIZE, 0, GRID_SIZE, HEIGHT),
-    
-    # Inner maze walls
-    pygame.Rect(GRID_SIZE * 5, GRID_SIZE * 5, GRID_SIZE * 15, GRID_SIZE),
-    pygame.Rect(GRID_SIZE * 5, GRID_SIZE * 20, GRID_SIZE * 15, GRID_SIZE),
-    pygame.Rect(GRID_SIZE * 5, GRID_SIZE * 5, GRID_SIZE, GRID_SIZE * 5),
-    pygame.Rect(GRID_SIZE * 20, GRID_SIZE * 5, GRID_SIZE, GRID_SIZE * 5),
-    pygame.Rect(GRID_SIZE * 5, GRID_SIZE * 15, GRID_SIZE, GRID_SIZE * 5),
-    pygame.Rect(GRID_SIZE * 20, GRID_SIZE * 15, GRID_SIZE, GRID_SIZE * 5),
-    pygame.Rect(GRID_SIZE * 10, GRID_SIZE * 10, GRID_SIZE * 5, GRID_SIZE),
-    pygame.Rect(GRID_SIZE * 10, GRID_SIZE * 10, GRID_SIZE, GRID_SIZE * 5),
-    pygame.Rect(GRID_SIZE * 15, GRID_SIZE * 10, GRID_SIZE, GRID_SIZE * 5),
-    pygame.Rect(GRID_SIZE * 15, GRID_SIZE * 15, GRID_SIZE, GRID_SIZE * 5),
-    pygame.Rect(GRID_SIZE * 8, GRID_SIZE * 12, GRID_SIZE * 2, GRID_SIZE),
-    pygame.Rect(GRID_SIZE * 15, GRID_SIZE * 12, GRID_SIZE * 2, GRID_SIZE),
-    pygame.Rect(GRID_SIZE * 12, GRID_SIZE * 18, GRID_SIZE, GRID_SIZE * 2),
-    pygame.Rect(GRID_SIZE * 12, GRID_SIZE * 8, GRID_SIZE, GRID_SIZE * 2)
-]
-
-############################
-#    DOTS / SPAWN LOGIC
-############################
-dots = [
-    (x, y) for x in range(0, WIDTH, GRID_SIZE)
-    for y in range(0, HEIGHT, GRID_SIZE)
-    if not any(pygame.Rect(x, y, GRID_SIZE, GRID_SIZE).colliderect(w) for w in walls)
-]
+#############################
 
 def get_valid_spawn():
     """Find a random position not inside a wall or Pac-Man."""
@@ -134,7 +143,7 @@ def get_valid_spawn_player():
 #      ENEMY SPAWN
 ############################
 enemies = []
-for _ in range(15):
+for _ in range(4):
     ex, ey = get_valid_spawn()
     dx, dy = random.choice([-GRID_SIZE, GRID_SIZE]), random.choice([-GRID_SIZE, GRID_SIZE])
     enemies.append([ex, ey, dx, dy])
@@ -163,6 +172,9 @@ def get_game_state():
     global pacman_x, pacman_y, pacman_dx, pacman_dy
     state = np.zeros((WIDTH // GRID_SIZE, HEIGHT // GRID_SIZE))
 
+    grid_w = WIDTH // GRID_SIZE
+    grid_h = HEIGHT // GRID_SIZE
+
     # Mark walls
     for w in walls:
         x_start = w.x // GRID_SIZE
@@ -182,8 +194,9 @@ def get_game_state():
     # Mark enemies
     for en in enemies:
         ex, ey = en[0] // GRID_SIZE, en[1] // GRID_SIZE
-        if state[ex, ey] in [0, 0.5]:
-            state[ex, ey] = ENEMY_VAL
+        if 0 <= ex < grid_w and 0 <= ey < grid_h:
+            if state[ex, ey] in [EMPTY_VAL, DOT_VAL]:
+                state[ex, ey] = ENEMY_VAL
 
     # Mark Pac-Man
     px, py = pacman_x // GRID_SIZE, pacman_y // GRID_SIZE
@@ -201,14 +214,27 @@ def get_game_state():
     direction_tensor = torch.tensor([direction], dtype=torch.float32)
 
     # Return combined
-    return torch.cat((state_tensor, direction_tensor), dim=1)
+    combined = torch.cat((state_tensor, direction_tensor), dim=1)
+
+    # print(f"state_tensor shape: {state_tensor.shape}")      # should be [1, W×H]
+    # print(f"direction_tensor shape: {direction_tensor.shape}")  # should be [1, 4]
+    # print(f"combined state shape: {combined.shape}")        # should be [1, W×H+4]
+
+    return combined
 
 ############################
 #   VISUALIZATION FUNCTION
 ############################
 def visualize_game_state(state):
-    state_matrix = state[0, :625].numpy().reshape(WIDTH // GRID_SIZE, HEIGHT // GRID_SIZE)
-    direction_vector = state[0, 625:].numpy()  # Last 4 values contain movement direction
+    flat_state = state[0].numpy()
+
+    grid_w = WIDTH // GRID_SIZE
+    grid_h = HEIGHT // GRID_SIZE
+    grid_size = grid_w * grid_h
+
+    # Correct slicing
+    state_matrix = flat_state[:grid_size].reshape(grid_w, grid_h)
+    direction_vector = flat_state[grid_size:]  # Last 4 values contain movement direction
 
     cell_width = viz_width // (WIDTH // GRID_SIZE)
     cell_height = viz_height // (HEIGHT // GRID_SIZE)
@@ -420,11 +446,7 @@ for episode in range(episode_count + 1, NUM_EPISODES + 1):
     # Randomize enemies/dots
     pacman_x, pacman_y = get_valid_spawn_player()
     randomize_enemies()
-    dots = [
-        (x, y) for x in range(0, WIDTH, GRID_SIZE)
-        for y in range(0, HEIGHT, GRID_SIZE)
-        if not any(pygame.Rect(x, y, GRID_SIZE, GRID_SIZE).colliderect(w) for w in walls)
-    ]
+    walls, dots, WIDTH, HEIGHT = build_maze(MAZE, GRID_SIZE)
 
     # Initial state
     state = get_game_state()
@@ -556,7 +578,7 @@ for episode in range(episode_count + 1, NUM_EPISODES + 1):
     torch.save(model.state_dict(), "pacman_dqn.pth")
     print("Model saved as pacman_dqn.pth")
 
-    if episode % 1000 == 0:
+    if episode % 500 == 0:
         model_path = f"models/pacman_ep{episode}.pth"
         torch.save(model.state_dict(), model_path)
         print(f"📁 Snapshot saved: {model_path}")
