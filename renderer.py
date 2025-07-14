@@ -10,6 +10,8 @@ class Renderer:
 
     def __init__(self):
         pygame.init()
+        pygame.font.init()
+        self.font = pygame.font.SysFont("Arial", 18)
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         pygame.display.set_caption("Pac-Man DQN")
         self.clock = pygame.time.Clock()
@@ -20,7 +22,7 @@ class Renderer:
                 pygame.quit()
                 sys.exit()
 
-    def render(self, env, heatmap=None):
+    def render(self, env, heatmap=None, stats=None):
         """
         Draw the current frame:
           - Clear screen
@@ -45,10 +47,16 @@ class Renderer:
         # Overlay heatmap if provided
         if heatmap is not None:
             self.draw_heatmap(heatmap)
+        
+        if stats:
+            text = f"E:{stats['episode']}  R:{stats['reward']:.2f}  ε:{stats['epsilon']:.2f}"
+            surf = self.font.render(text, True, pygame.Color("white"))
+            # position it at top-left with a small margin
+            self.screen.blit(surf, (10, 10))
 
         # Flip and tick
         pygame.display.flip()
-        self.clock.tick(60)
+        self.clock.tick(500)
 
     def draw_walls(self, walls):
         """

@@ -55,7 +55,9 @@ def main():
         done = False
         step = 0
         start_time = time.time()
+
         renderer = Renderer()
+        renderer.clock.tick(500)
 
         # Loop until terminal, step limit, or time limit
         while (not done
@@ -68,6 +70,14 @@ def main():
             state = next_state
             total_reward += reward
             step += 1
+            renderer.render(env, 
+                heatmap=None,
+                stats={
+                'episode':  ep,
+                'reward':   total_reward,
+                'epsilon':  agent.epsilon
+                }
+            )
 
         # If episode didn't finish by goal, note the reason
         if not done:
@@ -76,7 +86,6 @@ def main():
                       else 'time limit reached')
             print(f"→ Episode {ep} ended early ({reason})")
         
-        renderer.render(env)
 
         # Episode-end updates
         agent.decay_epsilon()
@@ -96,6 +105,7 @@ def main():
         # Full snapshot every 100 episodes
         if ep % 100 == 0:
             agent.save(FULL_TEMPLATE.format(ep=ep), MEMORY_PATH)
+        
 
     print("Training complete.")
 
