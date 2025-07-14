@@ -38,14 +38,14 @@ OUTPUT_SIZE = 4  # [Left, Right, Up, Down]
 MEMORY_CAPACITY = 10000
 
 # DQN Model / Optimizer Hyperparams
-LEARNING_RATE = 0.0001
+LEARNING_RATE = 0.0003
 BATCH_SIZE = 80
 GAMMA = 0.7
 
 # Exploration Scheduling
 EPSILON_START = 1.0
-EPSILON_DECAY = 0.9999
-EPSILON_MIN = 0.3
+EPSILON_DECAY = 0.9995
+EPSILON_MIN = 0.05
 
 # Episodes
 NUM_EPISODES = 100000
@@ -70,13 +70,13 @@ MAZE = """
 #..........................#
 #.####.##.########.##.####.#
 #......##....##....##......#
-######.#####.##.#####.##.###
-######.#          #......###
-######.# ######## #.####.###
-######.  ########  .####.###
-######.# ######## #.####.###
-######.#          #.####.###
-######.# ######## #.####.###
+#.####.#####.##.#####.##.###
+#.####.#          #......###
+#.####.# ######## #.####.###
+#.####.  ########  .####.###
+#.####.# ######## #.####.###
+#.####.#          #.####.###
+#.####.# ######## #.####.###
 #............##............#
 #.####.#####.##.#####.####.#
 #.####.#####.##.#####.####.#
@@ -161,11 +161,11 @@ def randomize_enemies():
 ############################
 #       GAME STATE
 ############################
-WALL_VAL = -1.0
-ENEMY_VAL = -0.8
-DOT_VAL = 0.5
-PACMAN_VAL = 1.0
-EMPTY_VAL = 0.0
+WALL_VAL   = -1.0   # strongest “don’t go here” signal  
+ENEMY_VAL  = -0.5   # dangerous but less absolute than a wall  
+EMPTY_VAL  =  0.0   # neutral background  
+DOT_VAL    = +0.5   # small positive incentive  
+PACMAN_VAL = +1.0   # “self” channel, strongest positive  
 
 def get_game_state():
     """Tensor representation of walls, enemies, dots, Pac-Man, direction."""
@@ -293,39 +293,52 @@ def visualize_game_state(state):
 ############################
 #     REWARD FUNCTION
 ############################
-def get_dist_to_nearest(items, px, py):
+def manhattan_dist(a, b):
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+def get_dist_to_nearest(items, px, py, metric="manhattan"):
     if not items:
-        return 1.0
-    dists = [np.linalg.norm([px - x, py - y]) for (x, y) in items]
-    max_dist = np.linalg.norm([WIDTH, HEIGHT])
-    return min(dists) / max_dist
+        return 0.0          # no items → distance zero by convention
+    if metric == "euclid":
+        dists = [np.hypot(px - x, py - y) for x, y in items]
+    else:
+        dists = [manhattan_dist((px, py), (x, y)) for x, y in items]
+    return min(dists)
+
+# Pre-compute max possible Manhattan distance once
+MAX_GRID_DIST = (WIDTH // GRID_SIZE + HEIGHT // GRID_SIZE) * GRID_SIZE  # 49 * 20 = 980
 
 def get_reward(px, py, old_x, old_y, dots, enemies, done):
+    # 1. terminal
     if done:
-        return -2.0  # death penalty
+        return -5.0
 
-    reward = -0.01  # small step penalty
+    reward = -0.02  # living cost
 
+    # 2. dot eaten
     if (px, py) in dots:
-        reward += 1.0  # reward for eating dot
+        reward += 1.5
 
+    # 3. bump against wall
     if (px, py) == (old_x, old_y):
-        reward -= 0.2  # bump into wall
+        reward -= 0.4
 
-    # Penalty if next to any enemy (4-neighbors only)
-    for ex, ey in [(e[0], e[1]) for e in enemies]:
-        if abs(px - ex) + abs(py - ey) == GRID_SIZE:
-            reward -= 1.5
+    # 4. near enemy (4-neighbour)
+    for ex, ey in ((e[0], e[1]) for e in enemies):
+        if manhattan_dist((px, py), (ex, ey)) == GRID_SIZE:
+            reward -= 2.0
             break
 
-    # Distance-based shaping
-    old_dot_dist = get_dist_to_nearest(dots, old_x, old_y)
-    new_dot_dist = get_dist_to_nearest(dots, px, py)
-    reward += 0.3 * (old_dot_dist - new_dot_dist)  # encourage getting closer to dots
+    # 5. distance shaping ➜ **toward dots**
+    old_d = get_dist_to_nearest(dots, old_x, old_y, "manhattan")
+    new_d = get_dist_to_nearest(dots, px,  py,  "manhattan")
+    reward += 0.7 * ((old_d - new_d) / GRID_SIZE)
 
-    old_enemy_dist = get_dist_to_nearest([(e[0], e[1]) for e in enemies], old_x, old_y)
-    new_enemy_dist = get_dist_to_nearest([(e[0], e[1]) for e in enemies], px, py)
-    reward += 0.2 * (new_enemy_dist - old_enemy_dist)  # encourage moving away from enemies
+    # 6. distance shaping ➜ **away from enemies**
+    enemy_positions = [(e[0], e[1]) for e in enemies]
+    old_e = get_dist_to_nearest(enemy_positions, old_x, old_y, "manhattan")
+    new_e = get_dist_to_nearest(enemy_positions, px,  py,  "manhattan")
+    reward += 0.3 * ((new_e - old_e) / GRID_SIZE)
 
     return reward
 
@@ -514,6 +527,9 @@ for episode in range(episode_count + 1, NUM_EPISODES + 1):
             # Train every 5 steps
             if total_move_count % 10 == 0:
                 train_dqn(model, target_model, memory, optimizer, BATCH_SIZE, GAMMA)
+                with torch.no_grad():
+                    q_vals = model(state)
+                    print(f"Q-values: {q_vals.cpu().numpy()}")
             if total_move_count % 500 == 0:
                 update_target_model(model, target_model)
             if total_move_count % 2000 == 0:

@@ -1,0 +1,58 @@
+MAZE = """
+############################
+#............##............#
+#.####.#####.##.#####.####.#
+#.####.#####.##.#####.####.#
+#.####.#####.##.#####.####.#
+#..........................#
+#.####.##.########.##.####.#
+#......##....##....##......#
+#.####.#####.##.#####.##.###
+#.####.#          #......###
+#.####.# ######## #.####.###
+#.####.  ########  .####.###
+#.####.# ######## #.####.###
+#.####.#          #.####.###
+#.####.# ######## #.####.###
+#............##............#
+#.####.#####.##.#####.####.#
+#.####.#####.##.#####.####.#
+#.####.#####.##.#####.####.#
+#..........................#
+############################
+""".strip("\n")
+
+GRID_SIZE = 20
+_rows = MAZE.splitlines()
+WIDTH  = len(_rows[0]) * GRID_SIZE
+HEIGHT = len(_rows)    * GRID_SIZE
+del _rows
+
+# RL params
+LR      = 0.0003
+GAMMA   = 0.99
+EPS_START = 1.0
+EPS_END   = 0.05
+EPS_DECAY = 200
+NUM_EPISODES = 5000
+TARGET_UPDATE_FREQ = 10
+HIDDEN_SIZE = 256
+OUTPUT_SIZE = 4
+MEMORY_CAPACITY = 10000
+BATCH_SIZE = 80
+EPSILON_START = 1.0
+EPSILON_DECAY = 0.9995
+EPSILON_MIN = 0.05
+
+CHECKPOINT_DIR = "checkpoints/"
+MEMORY_PATH = "checkpoints/memory.pkl"
+MODEL_PATH     = "./model/dqn.pth"
+
+WALL_VAL   = -1.0
+ENEMY_VAL  = -0.5  
+EMPTY_VAL  =  0.0 
+DOT_VAL    = +0.5 
+PACMAN_VAL = +1.0
+
+MAX_STEPS_PER_EPISODE = 1000
+MAX_EPISODE_TIME = 30

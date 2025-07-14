@@ -66,7 +66,7 @@ class ReplayMemory:
         self,
         capacity,
         alpha=0.7,
-        min_termination_samples=20  # Minimum # of terminal samples per batch
+        min_termination_samples=10  # Minimum # of terminal samples per batch
     ):
         """
         :param capacity: Max number of transitions to store
@@ -201,12 +201,20 @@ def train_dqn(online_model, target_model, memory, optimizer, batch_size=32, gamm
     batch, indices, weights = memory.sample(batch_size, beta=beta)
     states, actions, rewards, next_states, dones = zip(*batch)
 
-    states = torch.cat(states, dim=0)
-    next_states = torch.cat(next_states, dim=0)
-    actions = torch.tensor(actions, dtype=torch.long)
-    rewards = torch.tensor(rewards, dtype=torch.float32)
-    dones = torch.tensor(dones, dtype=torch.bool)
-    weights = weights.to(states.device)
+    states     = torch.cat(states, dim=0)
+    next_states= torch.cat(next_states, dim=0)
+    actions    = torch.tensor(actions, dtype=torch.long)
+    rewards    = torch.tensor(rewards, dtype=torch.float32)
+    dones      = torch.tensor(dones, dtype=torch.bool)
+
+    device     = next(online_model.parameters()).device
+    states      = states.to(device)
+    next_states = next_states.to(device)
+    actions     = actions.to(device)
+    rewards     = rewards.to(device)
+    dones       = dones.to(device)
+    weights     = weights.to(device)
+    
 
     # 3. Q-values of the current states (for actions taken)
     q_values = online_model(states).gather(1, actions.unsqueeze(1)).squeeze(1)
