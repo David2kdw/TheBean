@@ -13,6 +13,7 @@ from config import (
 from environment import Environment
 from renderer import Renderer
 from agent import Agent
+import pygame, sys
 
 # File paths for checkpoints and metadata
 LATEST_MODEL = os.path.join(CHECKPOINT_DIR, 'latest_model.pth')
@@ -48,6 +49,10 @@ def main():
 
     start_ep = last_ep + 1
 
+    paused = False
+    heatmap_cache = None
+    renderer = Renderer()
+
     # Training loop
     for ep in range(start_ep, NUM_EPISODES + 1):
         state = env.reset()
@@ -56,13 +61,34 @@ def main():
         step = 0
         start_time = time.time()
 
-        renderer = Renderer()
-        renderer.clock.tick(500)
-
         # Loop until terminal, step limit, or time limit
         while (not done
                and step < MAX_STEPS_PER_EPISODE
                and (time.time() - start_time) < MAX_EPISODE_TIME):
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                if event.type == pygame.KEYUP and event.key == pygame.K_h:
+                    # toggle pause & heatmap
+                    print("h pressed")
+                    paused = not paused
+                    if paused:
+                        # compute once
+                        heatmap_cache = agent.compute_heatmap(env)
+                    else:
+                        heatmap_cache = None
+            
+            if paused:
+                renderer.render(env,
+                                heatmap=heatmap_cache,
+                                stats={'episode': ep,
+                                       'reward': total_reward,
+                                       'epsilon': agent.epsilon})
+                pygame.time.delay(100)
+                continue   # back to top of while, still paused
+            
+
             action = agent.select_action(state)
             next_state, reward, done = env.step(action)
             agent.store_transition(state, action, reward, next_state, done)
@@ -70,6 +96,7 @@ def main():
             state = next_state
             total_reward += reward
             step += 1
+
             renderer.render(env, 
                 heatmap=None,
                 stats={

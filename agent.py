@@ -1,5 +1,6 @@
 import torch
 import pickle
+import numpy as np
 from learning import DQN, ReplayMemory, train_dqn, select_action
 from config import (
     HIDDEN_SIZE,
@@ -11,7 +12,8 @@ from config import (
     BATCH_SIZE,
     EPSILON_START,
     EPSILON_DECAY,
-    EPSILON_MIN
+    EPSILON_MIN,
+    GRID_SIZE
 )
 
 
@@ -110,3 +112,28 @@ class Agent:
         """
         self.policy_net.load_state_dict(torch.load(path))
         self.update_target()
+
+    @torch.no_grad()
+    def compute_heatmap(self, env):
+        gw = env.width  // GRID_SIZE
+        gh = env.height // GRID_SIZE
+
+        # 1) gather all states
+        orig = list(env.pacman_pos)
+        states = []
+        for i in range(gw):
+            for j in range(gh):
+                env.pacman_pos = [i * GRID_SIZE, j * GRID_SIZE]
+                states.append(env.get_state()[0])   # get_state() is [1,feat], take [0]
+        env.pacman_pos = orig
+
+        # 2) batch them
+        batch = torch.stack(states).to(self.device)    # shape [gw*gh, feat_dim]
+
+        # 3) one network call
+        qvals = self.policy_net(batch)                # [gw*gh, action_dim]
+        max_q,_ = qvals.max(dim=1)                    # [gw*gh]
+
+        # 4) reshape back to grid
+        heatmap = max_q.cpu().numpy().reshape(gw, gh)
+        return heatmap

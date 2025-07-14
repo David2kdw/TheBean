@@ -1,6 +1,7 @@
 import pygame, sys
 import numpy as np
 from config import WIDTH, HEIGHT, GRID_SIZE
+import pygame.surfarray as surfarray
 
 
 class Renderer:
@@ -56,7 +57,7 @@ class Renderer:
 
         # Flip and tick
         pygame.display.flip()
-        self.clock.tick(500)
+        self.clock.tick(60)
 
     def draw_walls(self, walls):
         """
@@ -93,25 +94,20 @@ class Renderer:
             pygame.draw.circle(self.screen, pygame.Color('red'), center, radius)
 
     def draw_heatmap(self, heatmap):
-        """
-        Overlay a semi-transparent red heatmap.
-        heatmap: 2D numpy array of shape (grid_width, grid_height)
-        """
-        grid_w = WIDTH // GRID_SIZE
-        grid_h = HEIGHT // GRID_SIZE
+        # normalize to [0..255]
+        norm = (heatmap - heatmap.min()) / (heatmap.ptp() + 1e-6)
+        hm8  = (norm * 255).astype('uint8')
 
-        # Normalize heatmap values to 0-255
-        hm = (heatmap - np.min(heatmap)) / (np.ptp(heatmap) + 1e-6)
-        hm = (hm * 255).astype('uint8')
+        # build a 3-channel array: only red channel, zero G/B
+        rgb = np.zeros((heatmap.shape[0], heatmap.shape[1], 3), dtype='uint8')
+        rgb[...,0] = hm8
 
-        # Create transparent surface
-        surface = pygame.Surface((WIDTH, HEIGHT), flags=pygame.SRCALPHA)
-        for i in range(grid_w):
-            for j in range(grid_h):
-                alpha = hm[i, j] // 2  # half opacity
-                color = (255, 0, 0, int(alpha))
-                rect = pygame.Rect(i * GRID_SIZE, j * GRID_SIZE, GRID_SIZE, GRID_SIZE)
-                pygame.draw.rect(surface, color, rect)
+        # make a surface & alpha it
+        surf = surfarray.make_surface(rgb)
+        surf.set_alpha(128)
 
-        # Blit overlay
-        self.screen.blit(surface, (0, 0))
+        # stretch to full window
+        surf = pygame.transform.scale(surf, (WIDTH, HEIGHT))
+
+        # draw once
+        self.screen.blit(surf, (0, 0))
