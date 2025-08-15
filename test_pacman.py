@@ -3,7 +3,8 @@ import sys
 import argparse
 import torch
 import pygame
-from config import CHECKPOINT_DIR
+
+from config import CHECKPOINT_DIR, INPUT_SIZE   # ← 引入 INPUT_SIZE（堆叠后的输入维度）
 from environment import Environment
 from renderer import Renderer
 from agent import Agent
@@ -35,43 +36,43 @@ def main():
 
     # Initialize environment, agent, renderer
     env = Environment()
-    init_state = env.reset()
-    _, state_dim = init_state.shape
-    agent = Agent(input_dim=state_dim)
+
+    # 关键：用堆叠后的 INPUT_SIZE 初始化 Agent（不要用 env.get_state() 的单帧维度）
+    agent = Agent(input_dim=INPUT_SIZE)
     agent.load(ckpt)
     agent.epsilon = 0.0  # greedy policy
 
     pygame.init()
     renderer = Renderer()
-    # Set target FPS
-    renderer.clock.tick(args.fps)
 
     print(f"Loaded checkpoint: {ckpt}")
     print(f"Running {args.episodes} test episodes...")
 
     for ep in range(1, args.episodes + 1):
-        state = env.reset()
+        state = agent.reset_episode(env)   # [1, INPUT_SIZE]
         done = False
         total_reward = 0.0
         steps = 0
 
+        renderer.render(env)
+
         while not done:
-            # Handle OS events
+            # OS events
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     pygame.quit()
                     sys.exit()
 
-            # Select & apply action
             action = agent.select_action(state)
-            next_state, reward, done = env.step(action)
 
-            state = next_state
-            total_reward += reward
+            s_t, a, r, s_next, done = agent.step(env, action)
+
+            state = s_next
+            total_reward += r
             steps += 1
 
-            # Render frame
             renderer.render(env)
+            renderer.clock.tick(args.fps)
 
         print(f"[Test {ep}] Steps: {steps}, Total Reward: {total_reward:.2f}")
 

@@ -95,19 +95,18 @@ class Renderer:
 
     def draw_heatmap(self, heatmap):
         # normalize to [0..255]
-        norm = (heatmap - heatmap.min()) / (heatmap.ptp() + 1e-6)
-        hm8  = (norm * 255).astype('uint8')
+        h = np.asarray(heatmap, dtype=np.float32)
+        rng = np.ptp(h)
+        norm = (h - h.min()) / (rng + 1e-6)
+        hm8 = (norm * 255).astype(np.uint8)
 
-        # build a 3-channel array: only red channel, zero G/B
-        rgb = np.zeros((heatmap.shape[0], heatmap.shape[1], 3), dtype='uint8')
-        rgb[...,0] = hm8
+        w, hgt = heatmap.shape  # suppose heatmap shape is (gw, gh) = (width, height)
+        rgb = np.zeros((w, hgt, 3), dtype=np.uint8)
+        rgb[..., 0] = hm8
 
-        # make a surface & alpha it
+        rgb = np.ascontiguousarray(rgb)
         surf = surfarray.make_surface(rgb)
-        surf.set_alpha(128)
+        surf.set_alpha(240)
 
-        # stretch to full window
         surf = pygame.transform.scale(surf, (WIDTH, HEIGHT))
-
-        # draw once
         self.screen.blit(surf, (0, 0))

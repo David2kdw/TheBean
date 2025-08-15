@@ -1,8 +1,12 @@
+from collections import deque
+
 import torch
 import pickle
 import numpy as np
-from learning import DQN, ReplayMemory, train_dqn, select_action
+from learning import DQN, train_dqn, select_action as select_action_fn
+from replayMemory import ReplayMemory
 from config import (
+    INPUT_SIZE,
     HIDDEN_SIZE,
     OUTPUT_SIZE,
     MEMORY_CAPACITY,
@@ -23,7 +27,7 @@ class Agent:
     epsilon-greedy action selection, and learning updates.
     """
 
-    def __init__(self, input_dim, output_dim=OUTPUT_SIZE):
+    def __init__(self, input_dim, output_dim=OUTPUT_SIZE, k_frames=3):
         # Device configuration
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -38,13 +42,64 @@ class Agent:
         )
 
         # Replay memory
-        self.memory = ReplayMemory(MEMORY_CAPACITY)
+        self.memory = ReplayMemory(MEMORY_CAPACITY, min_terminal_samples=10)
 
         # Epsilon-greedy parameters
         self.epsilon = EPSILON_START
         self.epsilon_decay = EPSILON_DECAY
         self.epsilon_min = EPSILON_MIN
         self.steps_done = 0
+
+        self.k = k_frames
+        self.state_buf = deque(maxlen=self.k)
+
+    def _stacked(self):
+        assert len(self.state_buf) == self.k
+        frames = []
+        for f in self.state_buf:
+            if f.dim() == 1:
+                f = f.unsqueeze(0)
+            frames.append(f)
+        return torch.cat(frames, dim=1)
+
+    def reset_episode(self, env):
+        s0 = env.reset().to(self.device)
+        if s0.dim() == 1:
+            s0 = s0.unsqueeze(0)
+        self.state_buf.clear()
+        for _ in range(self.k):
+            self.state_buf.append(s0.clone())
+        return self._stacked()
+
+    def step(self, env, action):
+        """
+        Interact one step and return (stacked_state, action, reward, stacked_next, done).
+        """
+        s_t = self._stacked().detach().cpu()
+
+        next_state, reward, done = env.step(action)
+
+        s1 = next_state.to(self.device)
+        if s1.dim() == 1:
+            s1 = s1.unsqueeze(0)
+        self.state_buf.append(s1)
+        next_stacked = self._stacked().detach().cpu()
+
+        if getattr(self, "_stack_debug", True):
+            K = self.k
+            feat = next_stacked.shape[1] // K
+
+            left = next_stacked[:, : (K - 1) * feat]
+            right = s_t[:, feat: K * feat]
+            if not torch.allclose(left, right):
+                print("⚠️ Agent stack debug: shift mismatch",
+                      (left - right).abs().max().item())
+            else:
+                print("Agent stack debug: match!")
+
+            if self.steps_done > 50:
+                self._stack_debug = False
+        return s_t, action, float(reward), next_stacked, bool(done)
 
     def update_target(self):
         """
@@ -58,7 +113,7 @@ class Agent:
         """
         self.memory.push(*args)
 
-    def select_action(self, state):
+    def select_action(self, state=None):
         """
         Choose an action using epsilon-greedy policy.
 
@@ -67,8 +122,12 @@ class Agent:
         Returns:
             int: chosen action index
         """
+        if state is None:
+            state = self._stacked()
+        state = state.to(self.device)
+
         eps = self.epsilon
-        action = select_action(self.policy_net, state.to(self.device), eps)
+        action = select_action_fn(self.policy_net, state.to(self.device), eps)
         self.steps_done += 1
         return action
 
@@ -100,8 +159,8 @@ class Agent:
         torch.save(self.policy_net.state_dict(), model_path)
 
         # 2) Memory (always the same file, so it gets replaced)
-        with open(memory_path, "wb") as f:
-            pickle.dump(self.memory, f)
+        # with open(memory_path, "wb") as f:
+        #     pickle.dump(self.memory, f)
 
     def load(self, path: str):
         """
@@ -115,25 +174,27 @@ class Agent:
 
     @torch.no_grad()
     def compute_heatmap(self, env):
-        gw = env.width  // GRID_SIZE
+        gw = env.width // GRID_SIZE
         gh = env.height // GRID_SIZE
 
-        # 1) gather all states
-        orig = list(env.pacman_pos)
+        # 1) gather states
+        orig = tuple(env.pacman_pos)
         states = []
         for i in range(gw):
             for j in range(gh):
                 env.pacman_pos = [i * GRID_SIZE, j * GRID_SIZE]
-                states.append(env.get_state()[0])   # get_state() is [1,feat], take [0]
-        env.pacman_pos = orig
+                s = env.get_state()[0]
+                states.append(s)
+        env.pacman_pos = list(orig)
 
-        # 2) batch them
-        batch = torch.stack(states).to(self.device)    # shape [gw*gh, feat_dim]
+        # 2) batch forward
+        was_training = self.policy_net.training
+        self.policy_net.eval()  # 习惯上在可视化时用 eval
+        batch = torch.stack(states, dim=0).to(self.device)
+        qvals = self.policy_net(batch)
+        self.policy_net.train(was_training)
 
-        # 3) one network call
-        qvals = self.policy_net(batch)                # [gw*gh, action_dim]
-        max_q,_ = qvals.max(dim=1)                    # [gw*gh]
-
-        # 4) reshape back to grid
-        heatmap = max_q.cpu().numpy().reshape(gw, gh)
+        # 3) reshape back to grid
+        max_q = qvals.max(dim=1).values  # [gw*gh]
+        heatmap = max_q.view(gw, gh).cpu().numpy()
         return heatmap

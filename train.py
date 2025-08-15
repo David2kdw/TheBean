@@ -1,8 +1,10 @@
 import os
+import pickle
 import time
 import json
 import torch
 from config import (
+    INPUT_SIZE,
     NUM_EPISODES,
     TARGET_UPDATE_FREQ,
     CHECKPOINT_DIR,
@@ -35,7 +37,7 @@ def main():
     env = Environment()
     init_state = env.reset()
     _, state_dim = init_state.shape
-    agent = Agent(input_dim=state_dim)
+    agent = Agent(input_dim=INPUT_SIZE)
 
     # Resume from latest checkpoint if available
     last_ep = 0
@@ -47,6 +49,15 @@ def main():
         agent.load(LATEST_MODEL)
         print(f"Resumed training from episode {last_ep}, epsilon={agent.epsilon:.3f}")
 
+    # Load memory
+    try:
+        with open(MEMORY_PATH, "rb") as f:
+            loaded = pickle.load(f)
+            agent.memory = loaded
+    except Exception as e:
+        print(f"[memory] failed to load: {e}")
+
+
     start_ep = last_ep + 1
 
     paused = False
@@ -55,11 +66,18 @@ def main():
 
     # Training loop
     for ep in range(start_ep, NUM_EPISODES + 1):
-        state = env.reset()
+        state = agent.reset_episode(env)  # returns stacked [1, feat*K]
         total_reward = 0.0
         done = False
         step = 0
         start_time = time.time()
+        paused = False
+        heatmap_cache = None
+        renderer.render(env,
+                        heatmap=None,
+                        stats={'episode': ep,
+                               'reward': total_reward,
+                               'epsilon': agent.epsilon})
 
         # Loop until terminal, step limit, or time limit
         while (not done
@@ -89,13 +107,13 @@ def main():
                 continue   # back to top of while, still paused
             
 
-            action = agent.select_action(state)
-            next_state, reward, done = env.step(action)
-            agent.store_transition(state, action, reward, next_state, done)
+            action = agent.select_action()
+            s, a, r, s_next, done = agent.step(env, action)
+            agent.store_transition(s, a, r, s_next, done)
             agent.optimize_model()
-            state = next_state
-            total_reward += reward
+            total_reward += r
             step += 1
+            state = s_next
 
             renderer.render(env, 
                 heatmap=None,
@@ -132,6 +150,8 @@ def main():
         # Full snapshot every 100 episodes
         if ep % 100 == 0:
             agent.save(FULL_TEMPLATE.format(ep=ep), MEMORY_PATH)
+            with open(MEMORY_PATH, "wb") as f:
+                pickle.dump(agent.memory, f)
         
 
     print("Training complete.")
