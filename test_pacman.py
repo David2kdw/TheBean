@@ -1,7 +1,6 @@
 import os
 import sys
 import argparse
-import torch
 import pygame
 
 from config import CHECKPOINT_DIR, INPUT_SIZE   # ← 引入 INPUT_SIZE（堆叠后的输入维度）

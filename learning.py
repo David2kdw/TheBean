@@ -1,8 +1,4 @@
-import torch
-import torch.nn as nn
-import torch.optim as optim
 import random
-import numpy as np
 from replayMemory import ReplayMemory
 import torch
 import torch.nn as nn
@@ -135,20 +131,18 @@ def train_dqn(
                   f"T={target_q_values[idx].item():.3f}")
         print('-' * 50)
 
-
-
-
-
-
 def select_action(model, state, epsilon):
-    if random.random() < epsilon:  # Exploration
-        return random.randint(0, 3)  # 4 possible actions
-    else:  # Exploitation
+    if random.random() < epsilon:
+        return random.randint(0, 3)
+    else:
         with torch.no_grad():
-            model.eval()  # Use eval mode to avoid BatchNorm issues
-            q_values = model(state.unsqueeze(0))  # Add batch dimension
-            model.train()  # Restore training mode
-            return q_values.argmax(dim=1).item()  # Select best action
+            model.eval()
+            if state.dim() == 1:
+                state = state.unsqueeze(0)
+            q_values = model(state)
+            model.train()
+            return q_values.argmax(dim=1).item()
+
 
 
     

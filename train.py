@@ -54,6 +54,7 @@ def main():
         with open(MEMORY_PATH, "rb") as f:
             loaded = pickle.load(f)
             agent.memory = loaded
+            print("Memory loaded")
     except Exception as e:
         print(f"[memory] failed to load: {e}")
 

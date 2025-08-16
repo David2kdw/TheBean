@@ -187,11 +187,13 @@ class Agent:
                 states.append(s)
         env.pacman_pos = list(orig)
 
-        # 2) batch forward
+        # 2) batch forward  —— stack single frame K times along feature-dim
         was_training = self.policy_net.training
-        self.policy_net.eval()  # 习惯上在可视化时用 eval
-        batch = torch.stack(states, dim=0).to(self.device)
-        qvals = self.policy_net(batch)
+        self.policy_net.eval()
+        batch = torch.stack(states, dim=0).to(self.device)  # [N, BASE_FEAT_DIM]
+        # K-frame approximate stacking: [N, BASE_FEAT_DIM*K]
+        batch = torch.cat([batch] * self.k, dim=1)
+        qvals = self.policy_net(batch)  # [N, A]
         self.policy_net.train(was_training)
 
         # 3) reshape back to grid

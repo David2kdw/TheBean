@@ -1,4 +1,3 @@
-# environment.py
 from collections import deque
 
 import pygame
@@ -7,10 +6,6 @@ import numpy as np
 import torch
 from copy import deepcopy
 from config import MAZE, GRID_SIZE, WALL_VAL, DOT_VAL, ENEMY_VAL, EMPTY_VAL, PACMAN_VAL
-from utils import (
-    manhattan_dist,
-    get_dist_to_nearest
-)
 
 # ====== Tunable rewards / shaping weights ======
 R_DEATH = -15.0  # collision with an enemy
